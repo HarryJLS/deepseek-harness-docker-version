@@ -42,6 +42,18 @@ interface RegisteredFetchRoute {
   readonly fetch: ConnectionFetchRoute['fetch']
 }
 
+/**
+ * Deployment opt-outs applied ahead of the per-request gates. Both default to
+ * the closed position; a deployment that serves an untrusted network must
+ * leave them there.
+ */
+export interface ConnectionAccess {
+  /** Accept every Host authority instead of loopback plus `trustedHosts`. */
+  readonly allowAnyHost: boolean
+  /** Require a browser session (process token or signed cookie) on every `/api` request. */
+  readonly requireAuth: boolean
+}
+
 interface ConnectionServerResponse {
   readonly type: 'server-response'
   readonly rpcId: RpcIdType
@@ -65,11 +77,13 @@ export class HostConnectionService extends Service implements HostConnectionHand
    * @param ctx - owning Connection plugin context.
    * @param trustedHosts - deployment authorities accepted by the Host/Origin fence.
    * @param browserAuth - process token and persistent browser-session owner.
+   * @param access - deployment opt-outs from the Host fence and browser authentication.
    */
   constructor(
     ctx: Context,
     private readonly trustedHosts: readonly string[],
     private readonly browserAuth: BrowserAuth,
+    private readonly access: ConnectionAccess = { allowAnyHost: false, requireAuth: true },
   ) {
     super(ctx, 'connection')
   }
@@ -94,17 +108,24 @@ export class HostConnectionService extends Service implements HostConnectionHand
 
   /** Apply the configured Host/Origin fence, then browser authentication. */
   requestRejection(request: ConnectionTrustRequest): ConnectionRequestRejection {
-    if (!isTrustedApiRequest(request, this.trustedHosts)) return 403
+    if (!isTrustedApiRequest(request, this.trustedHosts, this.access.allowAnyHost)) return 403
+    if (!this.access.requireAuth) return undefined
     return this.browserAuth.isAuthenticated(request) ? undefined : 401
   }
 
   /** Authenticate an index request through the process-token exchange or cookie. */
   authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean {
+    // An unauthenticated deployment serves the shell to anyone who asks; no
+    // cookie is minted, so nothing downstream depends on the exchange.
+    if (!this.access.requireAuth) return true
     return this.browserAuth.authorizeIndex(request, response)
   }
 
   /** Add this process's launch token to the clean application URL. */
   authenticatedUrl(baseUrl: string): string {
+    // Without authentication there is no token to carry, and printing one
+    // would imply a gate that is not there.
+    if (!this.access.requireAuth) return baseUrl
     return this.browserAuth.authenticatedUrl(baseUrl)
   }
 

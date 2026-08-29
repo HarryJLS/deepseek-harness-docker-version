@@ -77,6 +77,24 @@ export interface ConnectionConfig {
    * bind. An entry that is not a bare, canonical authority fails plugin load.
    */
   trustedHosts?: string[]
+  /**
+   * Accept every Host authority, replacing the loopback-plus-`trustedHosts`
+   * fence. A deployment reached through a forwarded container port, an
+   * ingress, or a rotating service address cannot enumerate the authorities
+   * its clients write — the LAN literals derived from an all-interface bind
+   * name the container's own interfaces, not the address a browser used. Such
+   * a deployment sets this and gives up the DNS-rebinding and cross-site
+   * defenses the fence provides. Default: false.
+   */
+  allowAnyHost?: boolean
+  /**
+   * Require a browser session (the process launch token, then a signed
+   * cookie) on `/api` and on the application shell. Setting this false serves
+   * the harness — and therefore the shell and tool execution behind it — to
+   * every client that can reach the port, so it belongs only to a deployment
+   * whose network already answers for access. Default: true.
+   */
+  requireAuth?: boolean
   /** Absolute browser-session lifetime in days. Default: 30. */
   cookieMaxAgeDays?: number
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
@@ -85,6 +103,8 @@ export interface ConnectionConfig {
 
 export const Config: z<ConnectionConfig> = z.object({
   trustedHosts: z.array(String).default([]),
+  allowAnyHost: z.boolean().default(false),
+  requireAuth: z.boolean().default(true),
   cookieMaxAgeDays: z.natural().min(1).default(30),
   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
 })
@@ -99,6 +119,10 @@ export const Config: z<ConnectionConfig> = z.object({
 export async function apply(ctx: Context, config?: ConnectionConfig): Promise<void> {
   // The Loader resolves schema defaults; hand-built test contexts may pass none.
   const trustedHosts = config?.trustedHosts ?? []
+  const access = {
+    allowAnyHost: config?.allowAnyHost ?? false,
+    requireAuth: config?.requireAuth ?? true,
+  }
   const cookieMaxAgeDays = config?.cookieMaxAgeDays ?? 30
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
   // Config boundary: a malformed entry fails the load loudly here rather than
@@ -109,6 +133,7 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
     ctx,
     trustedHosts,
     await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays),
+    access,
   )
   const fetchHandler = connection.createSharedFetchHandler(API_PATH)
   const route: WebRoute = {

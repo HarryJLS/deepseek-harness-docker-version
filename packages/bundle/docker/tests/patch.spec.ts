@@ -1,0 +1,98 @@
+/**
+ * The container bundle's patch layer.
+ *
+ * The patch is the whole substance of this package, and its failure mode is
+ * quiet: a provider swap that forgets to disable the row it replaces mounts two
+ * providers of one service, and a plugin named without a matching dependency
+ * entry fails module resolution only at boot on a real deployment. Both are
+ * checked here against the file itself.
+ */
+
+import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { parse } from 'yaml'
+
+/**
+ * The Loader evaluates `!!js` config expressions at composition time; a plain
+ * parse cannot resolve the tag and would warn on every one. Declaring it as an
+ * opaque string keeps the parse quiet while the assertions below read only the
+ * literal fields.
+ */
+const JS_TAG = { tag: 'tag:yaml.org,2002:js', resolve: (value: string) => value }
+
+const packageRoot = join(import.meta.dirname, '..')
+
+/** Row operations as the patch file declares them. */
+interface PatchRow {
+  id?: string
+  name?: string
+  disabled?: boolean
+  insert?: { id: string; name: string }[]
+}
+
+const patch = parse(
+  readFileSync(join(packageRoot, 'cordis.patch.yml'), 'utf8'),
+  { customTags: [JS_TAG] },
+) as PatchRow[]
+const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as {
+  dsh: { bundle: { patch: string } }
+  dependencies: Record<string, string>
+}
+
+/** Every row this patch inserts, flattened. */
+const inserted = patch.flatMap(row => row.insert ?? [])
+/** Every row id this patch disables. */
+const disabled = new Set(patch.filter(row => row.disabled === true).map(row => row.id))
+
+describe('container bundle manifest', () => {
+  it('declares the patch the profile composer resolves', () => {
+    expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
+  })
+
+  it('depends on every package its patch names', () => {
+    // The Loader resolves a row's module from the profile directory, whose
+    // module fallback mirrors this dependency closure. A plugin named here
+    // without a dependency entry fails boot with ERR_MODULE_NOT_FOUND.
+    const named = inserted
+      .map(row => row.name)
+      .filter(name => name.startsWith('@deepseek-ai/'))
+    expect(named.length).toBeGreaterThan(0)
+    for (const name of named) {
+      expect(manifest.dependencies, `${name} is inserted but not depended on`).toHaveProperty(name)
+    }
+  })
+})
+
+describe('provider swaps', () => {
+  it.each([
+    ['settings', 'settings-nacos'],
+    ['credentials', 'credentials-nacos'],
+    ['storage-json', 'storage-postgres'],
+    ['session-persistence-jsonl', 'session-persistence-postgres'],
+    ['attachment-local', 'attachment-postgres'],
+  ])('replaces %s with %s', (replaced, replacement) => {
+    // Two providers of one service both mount and collide; the disable is what
+    // makes a swap a swap rather than a duplicate.
+    expect(disabled.has(replaced), `${replaced} must be disabled`).toBe(true)
+    expect(inserted.some(row => row.id === replacement)).toBe(true)
+  })
+})
+
+describe('network exposure', () => {
+  it('binds every interface', () => {
+    const webserver = patch.find(row => row.id === 'webserver') as
+      { config?: { host?: string } } | undefined
+    expect(webserver?.config?.host).toBe('0.0.0.0')
+  })
+
+  it('opens both request gates, which the bind alone does not', () => {
+    // The Host fence and browser authentication are independent; a container
+    // reached through a published port needs both opened or /api answers 403
+    // and the shell answers 401.
+    const connection = patch.find(row => row.id === 'connection') as
+      { config?: { allowAnyHost?: boolean; requireAuth?: boolean } } | undefined
+    expect(connection?.config?.allowAnyHost).toBe(true)
+    expect(connection?.config?.requireAuth).toBe(false)
+  })
+})

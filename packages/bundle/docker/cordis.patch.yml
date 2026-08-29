@@ -1,0 +1,175 @@
+# The dsh-docker bundle patch: container deployment over the web-app layer.
+#
+# This file is the STATIC half of the deployment's configuration split. Every
+# value here is fixed at image build time and ships with the code, because each
+# one is needed BEFORE a remote configuration source can be contacted — where
+# this server binds, and where Nacos itself lives. Reading them from Nacos
+# would be circular.
+#
+# The LIVE half — model routes, credentials, the plugin roster — lives in the
+# Nacos entry this patch points the settings seam at, and changes there reach a
+# running container without a restart or a redeploy.
+#
+# Connection details are read from the environment so one image serves every
+# environment; `!!js` expressions are evaluated by the Loader.
+#
+# A patch replaces a row's whole `config`, so each row below restates every key
+# it owns, and a provider swap is a `disabled` plus an `insert` rather than a
+# rename.
+
+# ── network: bind every interface ──────────────────────────────────────────
+#
+# The container owns its network namespace, so an all-interface bind exposes
+# exactly the ports the runtime publishes. The web app's flag parser refuses
+# `--host 0.0.0.0` on purpose; the composition layer is the supported way to
+# declare a non-loopback bind, and it is the right home for the value anyway —
+# the bind belongs to the deployment, not to an invocation.
+- id: webserver
+  config:
+    host: '0.0.0.0'
+    port: !!js Number(process.env.DSH_PORT ?? 3080)
+    compression: gzip
+    compressionLevel: 1
+    compressionThresholdBytes: 1024
+
+# ── access control: open ───────────────────────────────────────────────────
+#
+# A container is reached through a published port, a service address, or an
+# ingress — none of which the process can enumerate, and the LAN literals
+# derived from an all-interface bind name this container's own interfaces
+# rather than any address a browser types. Both request gates are opened.
+#
+# This serves the harness, and the shell execution behind it, to every client
+# that can reach the port. The network in front of the container is what
+# answers for access.
+- id: connection
+  inject: [webRuntime]
+  config:
+    trustedHosts: !!js ctx.webRuntime.trustedHosts
+    allowAnyHost: true
+    requireAuth: false
+
+# ── live configuration: Nacos ──────────────────────────────────────────────
+#
+# `ctx.settings` is a capability seam, so replacing the file-backed provider
+# with the Nacos-backed one leaves every consumer unchanged: the Models page,
+# the LLM adapters, and the agent default model all keep reading the same
+# resolved namespaces. What moves is only where the raw document lives — from a
+# file under a harness home the container cannot persist, to one Nacos entry
+# every replica watches.
+- id: settings
+  disabled: true
+
+- insert:
+    - id: settings-nacos
+      name: '@deepseek-ai/dsh-settings-nacos'
+      config:
+        host: !!js process.env.DSH_NACOS_HOST ?? 'nacos'
+        port: !!js Number(process.env.DSH_NACOS_PORT ?? 8848)
+        namespace: !!js process.env.DSH_NACOS_NAMESPACE ?? ''
+        group: !!js process.env.DSH_NACOS_GROUP ?? 'DEFAULT_GROUP'
+        dataId: !!js process.env.DSH_NACOS_SETTINGS_DATA_ID ?? 'dsh-settings.yaml'
+        username: !!js process.env.DSH_NACOS_USERNAME
+        password: !!js process.env.DSH_NACOS_PASSWORD
+        writable: true
+
+# ── durable storage: PostgreSQL ────────────────────────────────────────────
+#
+# The JSON backend writes one document per unit under the harness home, which a
+# container without a volume loses on every restart. The database is one medium
+# several replicas share, so a replaced container keeps its state.
+#
+# `ctx.storage` resolves backends by name, so the swap is the backend row plus
+# the domain row's `backend` key; every domain owner above is untouched.
+- id: storage-json
+  disabled: true
+
+- insert:
+    - id: storage-postgres
+      name: '@deepseek-ai/dsh-storage-postgres'
+      config:
+        name: postgres
+        url: !!js process.env.DSH_POSTGRES_URL
+        host: !!js process.env.DSH_POSTGRES_HOST ?? 'postgres'
+        port: !!js Number(process.env.DSH_POSTGRES_PORT ?? 5432)
+        database: !!js process.env.DSH_POSTGRES_DB ?? 'dsh'
+        user: !!js process.env.DSH_POSTGRES_USER ?? 'dsh'
+        password: !!js process.env.DSH_POSTGRES_PASSWORD
+        schema: dsh
+
+- id: storage-domain
+  config:
+    backend: postgres
+
+# ── session logs: PostgreSQL ───────────────────────────────────────────────
+#
+# The JSONL backend writes one artifact per session under the harness home.
+# That is the state a container can least afford to lose: a replaced replica
+# must still resume what a user was in the middle of.
+#
+# The database backend drives the same shared persistence coordinator as the
+# JSONL and SQLite ones, so every semantic — crash repair, live adoption,
+# preparation reuse — is unchanged; only the medium moves. It is additionally
+# seek-capable, so a projection resuming from a watermark reads only the
+# suffix rather than the whole log.
+- id: session-persistence-jsonl
+  disabled: true
+
+- insert:
+    - id: session-persistence-postgres
+      name: '@deepseek-ai/dsh-session-persistence-postgres'
+      config:
+        url: !!js process.env.DSH_POSTGRES_URL
+        host: !!js process.env.DSH_POSTGRES_HOST ?? 'postgres'
+        port: !!js Number(process.env.DSH_POSTGRES_PORT ?? 5432)
+        database: !!js process.env.DSH_POSTGRES_DB ?? 'dsh'
+        user: !!js process.env.DSH_POSTGRES_USER ?? 'dsh'
+        password: !!js process.env.DSH_POSTGRES_PASSWORD
+        schema: dsh
+
+# ── credentials: Nacos ─────────────────────────────────────────────────────
+#
+# API keys and authorization grants are live configuration, not deployment
+# wiring: rotating a key must reach every replica without a redeploy, and a
+# container that owns no writable volume cannot keep them in a local document.
+#
+# The layering rule is unchanged. The inherited process environment still wins
+# and stays read-only, so a key supplied through the container's environment
+# remains authoritative and a write beneath it is refused rather than silently
+# ignored. The entry holds secrets: scope its Nacos namespace accordingly.
+- id: credentials
+  disabled: true
+
+- insert:
+    - id: credentials-nacos
+      name: '@deepseek-ai/dsh-credentials-nacos'
+      config:
+        host: !!js process.env.DSH_NACOS_HOST ?? 'nacos'
+        port: !!js Number(process.env.DSH_NACOS_PORT ?? 8848)
+        namespace: !!js process.env.DSH_NACOS_NAMESPACE ?? ''
+        group: !!js process.env.DSH_NACOS_GROUP ?? 'DEFAULT_GROUP'
+        dataId: !!js process.env.DSH_NACOS_CREDENTIALS_DATA_ID ?? 'dsh-credentials.yaml'
+        username: !!js process.env.DSH_NACOS_USERNAME
+        password: !!js process.env.DSH_NACOS_PASSWORD
+
+# ── attachments: PostgreSQL ────────────────────────────────────────────────
+#
+# Normalized image bytes back references the session log records, so losing
+# them breaks a conversation's history rather than merely degrading it. They
+# move to the database; the derived model-request variants deliberately do not,
+# because each is a deterministic function of (reference, route policy) and a
+# replaced container regenerates identical bytes on its own filesystem.
+- id: attachment-local
+  disabled: true
+
+- insert:
+    - id: attachment-postgres
+      name: '@deepseek-ai/dsh-attachment-postgres'
+      config:
+        url: !!js process.env.DSH_POSTGRES_URL
+        host: !!js process.env.DSH_POSTGRES_HOST ?? 'postgres'
+        port: !!js Number(process.env.DSH_POSTGRES_PORT ?? 5432)
+        database: !!js process.env.DSH_POSTGRES_DB ?? 'dsh'
+        user: !!js process.env.DSH_POSTGRES_USER ?? 'dsh'
+        password: !!js process.env.DSH_POSTGRES_PASSWORD
+        schema: dsh

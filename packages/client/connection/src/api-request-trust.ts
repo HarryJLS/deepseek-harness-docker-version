@@ -86,9 +86,21 @@ function isTrustedAuthority(hostUrl: URL, trustedHosts: readonly string[]): bool
  * Decide whether one /api request may reach the RPC bridge.
  * @param request - Node HTTP or Fetch request facts (headers).
  * @param trustedHosts - non-loopback authorities this deployment serves: exact `host:port`, or port-less `host` matching any port.
+ * @param allowAnyHost - when true, accept every Host and skip the cross-site and Origin fences entirely.
  * @returns true when the Host is ours (loopback or trusted) and any attached browser markers are same-origin.
  */
-export function isTrustedApiRequest(request: ConnectionTrustRequest, trustedHosts: readonly string[]): boolean {
+export function isTrustedApiRequest(
+  request: ConnectionTrustRequest,
+  trustedHosts: readonly string[],
+  allowAnyHost = false,
+): boolean {
+  // Deployment opt-out: a container reached through a forwarded port, an
+  // ingress, or a rotating service address cannot enumerate the authorities
+  // its clients write, and the LAN literals derived from an all-interface
+  // bind name the container's own interfaces rather than any of them. Such a
+  // deployment declares `allowAnyHost` and accepts every Host, giving up both
+  // the DNS-rebinding and the cross-site defense this fence provides.
+  if (allowAnyHost) return true
   // Host fence (DNS-rebinding defense), applied to every request: the browser
   // fills Host from the URL it believes it is talking to, so a rebound page
   // carries the attacker's domain here even though the socket lands on this

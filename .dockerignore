@@ -1,0 +1,9 @@
+# Everything the image does not need is excluded from the build context.
+**/node_modules
+**/.git
+**/lib
+**/dist
+**/.turbo
+**/coverage
+deploy/testplugin
+*.log

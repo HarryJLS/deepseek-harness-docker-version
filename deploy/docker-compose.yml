@@ -1,0 +1,99 @@
+# DeepSeek Harness — container stack.
+#
+# Three services: the harness, the Nacos it reads live configuration from, and
+# the PostgreSQL it keeps durable state in. Nothing is bind-mounted: every
+# writable path the harness needs lives in one of the two backing services, so
+# a replaced container starts clean and loses nothing.
+#
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# The harness listens on every interface inside its network namespace and
+# publishes 3080. Access is open by configuration: any client that can reach
+# the published port drives an agent with shell access, so publish it only
+# onto a network that already answers for access.
+
+name: dsh
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: dsh
+      POSTGRES_PASSWORD: dsh
+      POSTGRES_DB: dsh
+    ports:
+      # Published for inspection from outside the compose network. The harness
+      # itself reaches the database by service name and does not need this.
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `-d` matters: without it pg_isready probes a database named after the
+      # user and reports ready before `dsh` itself exists.
+      test: ['CMD-SHELL', 'pg_isready -U dsh -d dsh']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  nacos:
+    image: nacos/nacos-server:v3.0.2
+    environment:
+      MODE: standalone
+      # Nacos 3.x refuses to start without a Base64 token even when auth is
+      # disabled, so the value is required rather than optional.
+      NACOS_AUTH_ENABLE: 'false'
+      NACOS_AUTH_TOKEN: SecretKey012345678901234567890123456789012345678901234567890123456789
+      NACOS_AUTH_IDENTITY_KEY: serverIdentity
+      NACOS_AUTH_IDENTITY_VALUE: security
+      JVM_XMS: 512m
+      JVM_XMX: 512m
+      JVM_XMN: 256m
+    ports:
+      # 8848 is the API and 9848 its derived gRPC port — the client protocol.
+      # 8080 is the console, which 3.x serves separately.
+      - '8848:8848'
+      - '9848:9848'
+      - '8080:8080'
+    healthcheck:
+      # The cluster self-node endpoint is the readiness signal that actually
+      # answers 200 once the server is serving; the console moved off 8848 in
+      # 3.x and the config endpoints reject an incomplete probe with a 4xx,
+      # which `curl -f` would report as a failure rather than as "up".
+      test: ['CMD-SHELL', 'curl -sf -H "serverIdentity: security" http://127.0.0.1:8848/nacos/v3/admin/core/cluster/node/self || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  dsh:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        # The build context excludes .git; supply the commit the image is built
+        # from so the client build metadata is honest.
+        DSH_CLIENT_COMMIT_HASH: ${DSH_CLIENT_COMMIT_HASH:-0000000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+    environment:
+      DSH_NACOS_HOST: nacos
+      DSH_NACOS_PORT: '8848'
+      DSH_NACOS_GROUP: DEFAULT_GROUP
+      DSH_NACOS_SETTINGS_DATA_ID: dsh-settings.yaml
+      DSH_POSTGRES_HOST: postgres
+      DSH_POSTGRES_PORT: '5432'
+      DSH_POSTGRES_DB: dsh
+      DSH_POSTGRES_USER: dsh
+      DSH_POSTGRES_PASSWORD: dsh
+      # Space- or comma-separated package specs installed from the registry at
+      # start. Changing this list changes the deployment's plugins without
+      # rebuilding the image.
+      DSH_PLUGINS: ${DSH_PLUGINS:-}
+    ports:
+      - '3080:3080'
+
+volumes:
+  pgdata:

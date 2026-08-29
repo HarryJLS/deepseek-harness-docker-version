@@ -1,0 +1,165 @@
+/**
+ * Concurrency-safe PostgreSQL schema creation.
+ *
+ * `CREATE SCHEMA IF NOT EXISTS` is NOT atomic against a concurrent creator:
+ * PostgreSQL checks the catalog and then inserts, so two sessions running it
+ * at the same instant race and the loser fails on `pg_namespace`'s unique
+ * index. Cordis applies loader entries concurrently, so every harness plugin
+ * that owns tables in the same schema hits this on a database whose schema
+ * does not exist yet — a fresh deployment, and only a fresh one, which is why
+ * it does not appear once any earlier run has created it.
+ *
+ * Losing the race is not a failure: the schema exists, which is the whole
+ * postcondition the caller wants.
+ *
+ * The pool is accepted structurally so this stays dependency-free and works
+ * with any `pg` client, pool, or transaction.
+ *
+ * The package also owns the connection-config vocabulary every harness
+ * PostgreSQL plugin declares, so that one shape — and one set of defaults —
+ * describes how to reach the database across all of them.
+ *
+ * @module @deepseek-ai/dsh-postgres-schema
+ */
+
+import z from '@deepseek-ai/schemastery'
+
+/** The one method this helper needs from a `pg` client, pool, or transaction. */
+export interface PostgresQueryable {
+  query(sql: string): Promise<unknown>
+}
+
+/** Allowed schema spelling: safe as a SQL identifier without escaping. */
+export const SCHEMA_NAME_RE = /^[a-z][a-z0-9_]*$/
+
+/** PostgreSQL error codes a concurrent schema creation can lose with. */
+const DUPLICATE_SCHEMA = '42P06'
+const UNIQUE_VIOLATION = '23505'
+
+/**
+ * Whether one failure means another session created the schema first.
+ * @param error - the rejection from the create statement.
+ * @returns true when the schema now exists because someone else won.
+ */
+function isLostCreateRace(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code
+  return code === DUPLICATE_SCHEMA || code === UNIQUE_VIOLATION
+}
+
+/**
+ * Assert one caller-supplied schema name is a safe SQL identifier.
+ *
+ * The name is interpolated into every statement the caller then issues, so it
+ * is checked once at the configuration boundary, where a bad value fails the
+ * plugin load rather than some later query.
+ * @param value - the configured schema name.
+ * @returns the value, unchanged, when it is safe.
+ * @throws when the name could not be interpolated safely.
+ */
+export function assertSchemaName(value: string): string {
+  if (!SCHEMA_NAME_RE.test(value)) {
+    throw new Error(`postgres schema ${JSON.stringify(value)} must match ${String(SCHEMA_NAME_RE)}`)
+  }
+  return value
+}
+
+/**
+ * Create one schema, tolerating a concurrent creator.
+ * @param pool - anything that can run a statement.
+ * @param schema - schema name, already validated by {@link assertSchemaName}.
+ * @returns resolution once the schema exists, whoever created it.
+ */
+export async function ensureSchema(pool: PostgresQueryable, schema: string): Promise<void> {
+  try {
+    await pool.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`)
+  } catch (error) {
+    if (!isLostCreateRace(error)) throw error
+  }
+}
+
+/**
+ * How one plugin reaches the database. Every harness PostgreSQL plugin
+ * declares these fields, so they are defined once here and resolved by
+ * {@link resolvePostgresPool} rather than defaulted inline at each site.
+ */
+export interface PostgresConnectionConfig {
+  /** Full connection string; when set it wins over the discrete fields. */
+  url?: string
+  /** Database host. Default: `postgres`. */
+  host?: string
+  /** Database port. Default: 5432. */
+  port?: number
+  /** Database name. Default: `dsh`. */
+  database?: string
+  /** Role name. Default: `dsh`. */
+  user?: string
+  /** Role password. */
+  password?: string
+  /** Schema holding this plugin's tables, created when absent. Default: `dsh`. */
+  schema?: string
+  /** Maximum pooled connections. Default: 10. */
+  poolSize?: number
+}
+
+/**
+ * Connection options in the shape `pg.Pool` accepts. Declared structurally so
+ * this package stays dependency-free; the caller constructs the pool.
+ */
+export interface PostgresPoolOptions {
+  connectionString?: string
+  host?: string
+  port?: number
+  database?: string
+  user?: string
+  password?: string
+  max: number
+}
+
+/** Defaults applied when a field is omitted; stated once, never inline. */
+const DEFAULTS = { host: 'postgres', port: 5432, database: 'dsh', user: 'dsh', poolSize: 10 }
+
+/**
+ * Resolve one connection config into pool options.
+ * @param config - the plugin's connection fields.
+ * @returns options ready to hand to a pool constructor.
+ */
+export function resolvePostgresPool(config: PostgresConnectionConfig): PostgresPoolOptions {
+  const max = config.poolSize ?? DEFAULTS.poolSize
+  if (config.url !== undefined) return { connectionString: config.url, max }
+  return {
+    host: config.host ?? DEFAULTS.host,
+    port: config.port ?? DEFAULTS.port,
+    database: config.database ?? DEFAULTS.database,
+    user: config.user ?? DEFAULTS.user,
+    ...config.password !== undefined && { password: config.password },
+    max,
+  }
+}
+
+/**
+ * Resolve the database name a connection reaches, including from a URL. A
+ * revision or identity token qualified by the medium needs this even when the
+ * caller configured a connection string.
+ * @param config - the plugin's connection fields.
+ * @returns the database name.
+ */
+export function resolvePostgresDatabase(config: PostgresConnectionConfig): string {
+  if (config.url === undefined) return config.database ?? DEFAULTS.database
+  return new URL(config.url).pathname.replace(/^\//u, '') || DEFAULTS.database
+}
+
+/**
+ * Schemastery fields for {@link PostgresConnectionConfig}, for a plugin to
+ * spread into its own `Config` schema. Declaring them once keeps every
+ * PostgreSQL plugin's accepted fields, defaults, and secret marking identical.
+ */
+export const postgresConnectionSchema = {
+  url: z.string(),
+  host: z.string().default(DEFAULTS.host),
+  port: z.natural().default(DEFAULTS.port),
+  database: z.string().default(DEFAULTS.database),
+  user: z.string().default(DEFAULTS.user),
+  password: z.string().role('secret'),
+  schema: z.string().default('dsh'),
+  poolSize: z.natural().min(1).default(DEFAULTS.poolSize),
+}
