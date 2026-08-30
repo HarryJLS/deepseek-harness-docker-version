@@ -10,10 +10,17 @@
  *
  * 2. Install the deployment's plugin roster from an npm registry. This is the
  *    flexibility half of the deployment: which plugins a production container
- *    runs is a live decision, not an image rebuild. The roster arrives as
- *    `DSH_PLUGINS` (comma or space separated package specs) and each entry is
- *    handed to `dsh plugin add`, which forwards to pnpm inside the profile
- *    directory and appends any package declaring `dsh.bundle` to the list.
+ *    runs is a live decision, not an image rebuild. The roster is the union of
+ *    `DSH_PLUGINS` (comma or space separated package specs) and the Nacos entry
+ *    named by `DSH_NACOS_PLUGINS_DATA_ID`, and each spec is handed to
+ *    `dsh plugin add`, which forwards to pnpm inside the profile directory and
+ *    appends any package declaring `dsh.bundle` to the list.
+ *
+ * The install runs HERE, before the harness starts, because the Loader resolves
+ * a profile's modules once at composition: a package installed into a running
+ * process is not mountable by it, however the mount is requested. Declaring a
+ * plugin in Nacos therefore takes effect on the container's next start, which
+ * is what makes this script — not a plugin — the right owner of the roster.
  *
  * Both steps are idempotent: a restarted container with an unchanged roster
  * re-runs them and converges on the same profile.
@@ -27,21 +34,123 @@ const DSH_BIN = process.env.DSH_BIN ?? '/app/apps/cli/lib/bin.js'
 const PROFILE = process.env.DSH_PROFILE ?? 'web'
 const HOME_DIR = process.env.DSH_HOME ?? '/var/lib/dsh'
 const CONTAINER_BUNDLE = '@deepseek-ai/dsh-bundle-docker'
+const APP = process.env.DSH_APP_NAME ?? 'dsh'
+const NACOS_CLIENT = '/app/packages/nacos/nacos-client/lib/index.js'
+const YAML_MODULE = '/app/packages/bundle/docker/node_modules/yaml/dist/index.js'
 
 const profileDir = join(HOME_DIR, 'profiles', PROFILE)
 const manifestPath = join(profileDir, 'package.json')
 
-/** Run one dsh subcommand, inheriting stdio so failures are visible in logs. */
-function dsh(args) {
-  return spawnSync(process.execPath, [DSH_BIN, ...args], { stdio: 'inherit' })
+/**
+ * Run one dsh subcommand, inheriting stdio so failures are visible in logs.
+ * @param args - the subcommand and its arguments.
+ * @param env - extra environment variables for this call only.
+ * @returns the spawn result.
+ */
+function dsh(args, env = {}) {
+  return spawnSync(process.execPath, [DSH_BIN, ...args], {
+    stdio: 'inherit',
+    env: { ...process.env, ...env },
+  })
 }
 
-/** Split the roster env var on commas and whitespace, dropping empties. */
-function roster() {
-  return (process.env.DSH_PLUGINS ?? '')
+/**
+ * Environment that authenticates the install against a private registry.
+ *
+ * npm and pnpm read a bearer token from a host-scoped `_authToken` key, which
+ * has no command-line form — it must reach the child as configuration. The
+ * npm-config environment convention (`npm_config_<key>`) supplies it without
+ * writing a file, so the token never lands on disk in the profile, where a
+ * later `pnpm` run or a support bundle would pick it up.
+ *
+ * A registry-less token is refused rather than ignored: it means the operator
+ * expected authentication that would silently not happen, and a private
+ * package would then fail with a 404 naming no cause.
+ * @param registry - the configured registry URL, if any.
+ * @param token - the configured bearer token, if any.
+ * @returns the environment overlay for the install call.
+ * @throws when a token is configured without a registry.
+ */
+function registryAuth(registry, token) {
+  if (token === undefined || token === '') return {}
+  if (registry === undefined) {
+    throw new Error('entrypoint: a plugin-registry token needs a registry to scope it to')
+  }
+  const { host, pathname } = new URL(registry)
+  // npm keys the token by host and path, without scheme, exactly as an .npmrc
+  // line spells it: //host/path/:_authToken
+  const scope = `//${host}${pathname.endsWith('/') ? pathname : `${pathname}/`}`
+  return { [`npm_config_${scope}:_authToken`]: token }
+}
+
+/** Split a roster string on commas and whitespace, dropping empties. */
+function splitSpecs(value) {
+  return (value ?? '')
     .split(/[,\s]+/u)
     .map(entry => entry.trim())
     .filter(entry => entry !== '')
+}
+
+/**
+ * Read the Nacos-declared roster, if the deployment has one.
+ *
+ * Nacos is optional here: a deployment that configures no Nacos, or whose entry
+ * does not exist, gets an empty roster rather than a failed start — the plugin
+ * list is not what the container needs to serve its first request. A
+ * malformed entry IS fatal, because silently starting without the plugins an
+ * operator declared is worse than not starting.
+ *
+ * @returns the declared registry (or undefined) and package specs.
+ */
+async function nacosRoster() {
+  const host = process.env.DSH_NACOS_HOST
+  if (host === undefined || host === '') return { packages: [] }
+  const dataId = process.env.DSH_NACOS_PLUGINS_DATA_ID ?? `${APP}-plugin-roster.yml`
+
+  let content
+  const { NacosConfigClient } = await import(NACOS_CLIENT)
+  const client = new NacosConfigClient({
+    host,
+    port: Number(process.env.DSH_NACOS_PORT ?? 8848),
+    namespace: process.env.DSH_NACOS_NAMESPACE ?? '',
+    ...process.env.DSH_NACOS_USERNAME !== undefined && { username: process.env.DSH_NACOS_USERNAME },
+    ...process.env.DSH_NACOS_PASSWORD !== undefined && { password: process.env.DSH_NACOS_PASSWORD },
+  })
+  client.setErrorHandler(error => {
+    console.warn(`entrypoint: nacos roster read failed: ${String(error)}`)
+  })
+  try {
+    await client.connect()
+    const value = await client.read({
+      dataId,
+      group: process.env.DSH_NACOS_GROUP ?? 'DEFAULT_GROUP',
+    })
+    content = value.content
+  } catch (error) {
+    console.warn(`entrypoint: cannot reach Nacos for ${dataId}; continuing without it (${String(error)})`)
+    return { packages: [] }
+  } finally {
+    client.close()
+  }
+
+  if (content === undefined || content.trim() === '') return { packages: [] }
+  const { parse } = await import(YAML_MODULE)
+  const document = parse(content)
+  if (document === null || typeof document !== 'object' || Array.isArray(document)) {
+    throw new Error(`entrypoint: ${dataId} must be a YAML mapping with a 'packages' list`)
+  }
+  const packages = Array.isArray(document.packages) ? document.packages : []
+  for (const spec of packages) {
+    if (typeof spec !== 'string' || spec.trim() === '') {
+      throw new Error(`entrypoint: ${dataId} lists a package that is not a string: ${JSON.stringify(spec)}`)
+    }
+  }
+  console.log(`entrypoint: ${dataId} declares ${String(packages.length)} plugin package(s)`)
+  return {
+    ...typeof document.registry === 'string' && { registry: document.registry },
+    ...typeof document.token === 'string' && { token: document.token },
+    packages: packages.map(spec => spec.trim()),
+  }
 }
 
 /**
@@ -80,17 +189,88 @@ function selectContainerBundle() {
   console.log(`entrypoint: selected ${CONTAINER_BUNDLE}`)
 }
 
-/** Install every rostered plugin package into the profile. */
-function installRoster() {
-  const packages = roster()
-  if (packages.length === 0) return
-  console.log(`entrypoint: installing ${String(packages.length)} plugin package(s) from the registry`)
-  const result = dsh(['plugin', '--profile', PROFILE, 'add', ...packages])
-  if (result.status !== 0) {
-    throw new Error(`entrypoint: plugin install failed with exit ${String(result.status)}`)
+/**
+ * Install every rostered plugin package into the profile.
+ *
+ * The environment and the Nacos entry are one roster, de-duplicated by spec so
+ * a package named in both is installed once. The registry comes from the entry,
+ * else `DSH_NPM_REGISTRY`; without either, pnpm uses its own default.
+ * @param declared - the Nacos-declared registry, token, and packages.
+ */
+function installRoster(declared) {
+  const packages = [...new Set([...splitSpecs(process.env.DSH_PLUGINS), ...declared.packages])]
+  removeDropped(packages)
+  if (packages.length > 0) {
+    const registry = declared.registry ?? process.env.DSH_NPM_REGISTRY
+    const registryArgs = registry === undefined ? [] : ['--registry', registry]
+    console.log(
+      `entrypoint: installing ${String(packages.length)} plugin package(s)`
+      + `${registry === undefined ? '' : ` from ${registry}`}`,
+    )
+    const result = dsh(
+      ['plugin', '--profile', PROFILE, 'add', ...registryArgs, ...packages],
+      registryAuth(registry, declared.token ?? process.env.DSH_NPM_TOKEN),
+    )
+    if (result.status !== 0) {
+      throw new Error(`entrypoint: plugin install failed with exit ${String(result.status)}`)
+    }
   }
+  // Recorded even for an empty roster: the record is what the NEXT start diffs
+  // against, so skipping it would re-remove an already-removed package forever.
+  rememberRoster(packages)
+}
+
+/**
+ * The package NAME a pnpm spec installs, which is what uninstalling needs: a
+ * version range, a tarball path, and a registry name all resolve to one name,
+ * and only the name is addressable once installed.
+ * @param spec - one pnpm package spec.
+ * @returns the package name, or undefined when the spec names no package
+ *   directly (a path or URL, whose installed name is not derivable from it).
+ */
+function specName(spec) {
+  if (/^(?:file:|link:|https?:|git\+|github:)/u.test(spec) || spec.startsWith('.') || spec.startsWith('/')) {
+    return undefined
+  }
+  const at = spec.lastIndexOf('@')
+  return at > 0 ? spec.slice(0, at) : spec
+}
+
+/**
+ * Uninstall the packages a previous start installed from the roster and this
+ * one no longer declares.
+ *
+ * The roster is declarative: removing a line means the plugin should be gone,
+ * and leaving it installed would keep mounting it through its own bundle layer.
+ * Only packages THIS script recorded are removed — a package an operator added
+ * by hand is not the roster's to reclaim.
+ * @param packages - the specs this start declares.
+ */
+function removeDropped(packages) {
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  const previous = manifest.dsh?.roster ?? []
+  const declaredNames = new Set(packages.map(specName).filter(name => name !== undefined))
+  const dropped = previous.filter(name => !declaredNames.has(name))
+  if (dropped.length === 0) return
+  console.log(`entrypoint: removing ${String(dropped.length)} plugin package(s) dropped from the roster`)
+  const result = dsh(['plugin', '--profile', PROFILE, 'remove', ...dropped])
+  if (result.status !== 0) {
+    throw new Error(`entrypoint: plugin removal failed with exit ${String(result.status)}`)
+  }
+}
+
+/**
+ * Record which packages the roster owns, so a later start can tell a package it
+ * installed from one an operator added by hand.
+ * @param packages - the specs this start installed.
+ */
+function rememberRoster(packages) {
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  const names = [...new Set(packages.map(specName).filter(name => name !== undefined))].sort()
+  manifest.dsh = { ...manifest.dsh, roster: names }
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
 ensureProfile()
 selectContainerBundle()
-installRoster()
+installRoster(await nacosRoster())

@@ -6,12 +6,19 @@
 # this server binds, and where Nacos itself lives. Reading them from Nacos
 # would be circular.
 #
-# The LIVE half — model routes, credentials, the plugin roster — lives in the
-# Nacos entry this patch points the settings seam at, and changes there reach a
-# running container without a restart or a redeploy.
+# The LIVE half — model routes and credentials — lives in the Nacos entries this
+# patch points the settings and credentials seams at, and changes there reach a
+# running container without a restart or a redeploy. The plugin roster is live
+# too but arrives separately, through `DSH_PLUGINS` at container start.
 #
 # Connection details are read from the environment so one image serves every
 # environment; `!!js` expressions are evaluated by the Loader.
+#
+# `DSH_APP_NAME` scopes both backends at once: it names the PostgreSQL schema
+# each plugin's tables live in, and prefixes the Nacos entries this container
+# reads. Several applications built on this image therefore share one database
+# and one Nacos server without sharing a row — `kv_record`'s primary key is
+# (unit, tbl, key), which collides across applications in a single schema.
 #
 # A patch replaces a row's whole `config`, so each row below restates every key
 # it owns, and a provider swap is a `disabled` plus an `insert` rather than a
@@ -68,7 +75,7 @@
         port: !!js Number(process.env.DSH_NACOS_PORT ?? 8848)
         namespace: !!js process.env.DSH_NACOS_NAMESPACE ?? ''
         group: !!js process.env.DSH_NACOS_GROUP ?? 'DEFAULT_GROUP'
-        dataId: !!js process.env.DSH_NACOS_SETTINGS_DATA_ID ?? 'dsh-settings.yaml'
+        dataId: !!js process.env.DSH_NACOS_SETTINGS_DATA_ID ?? `${process.env.DSH_APP_NAME ?? 'dsh'}-settings.yaml`
         username: !!js process.env.DSH_NACOS_USERNAME
         password: !!js process.env.DSH_NACOS_PASSWORD
         writable: true
@@ -95,7 +102,8 @@
         database: !!js process.env.DSH_POSTGRES_DB ?? 'dsh'
         user: !!js process.env.DSH_POSTGRES_USER ?? 'dsh'
         password: !!js process.env.DSH_POSTGRES_PASSWORD
-        schema: dsh
+        app: !!js process.env.DSH_APP_NAME ?? 'dsh'
+        schema: !!js process.env.DSH_POSTGRES_SCHEMA
 
 - id: storage-domain
   config:
@@ -125,7 +133,8 @@
         database: !!js process.env.DSH_POSTGRES_DB ?? 'dsh'
         user: !!js process.env.DSH_POSTGRES_USER ?? 'dsh'
         password: !!js process.env.DSH_POSTGRES_PASSWORD
-        schema: dsh
+        app: !!js process.env.DSH_APP_NAME ?? 'dsh'
+        schema: !!js process.env.DSH_POSTGRES_SCHEMA
 
 # ── credentials: Nacos ─────────────────────────────────────────────────────
 #
@@ -148,7 +157,7 @@
         port: !!js Number(process.env.DSH_NACOS_PORT ?? 8848)
         namespace: !!js process.env.DSH_NACOS_NAMESPACE ?? ''
         group: !!js process.env.DSH_NACOS_GROUP ?? 'DEFAULT_GROUP'
-        dataId: !!js process.env.DSH_NACOS_CREDENTIALS_DATA_ID ?? 'dsh-credentials.yaml'
+        dataId: !!js process.env.DSH_NACOS_CREDENTIALS_DATA_ID ?? `${process.env.DSH_APP_NAME ?? 'dsh'}-credentials.yaml`
         username: !!js process.env.DSH_NACOS_USERNAME
         password: !!js process.env.DSH_NACOS_PASSWORD
 
@@ -172,4 +181,34 @@
         database: !!js process.env.DSH_POSTGRES_DB ?? 'dsh'
         user: !!js process.env.DSH_POSTGRES_USER ?? 'dsh'
         password: !!js process.env.DSH_POSTGRES_PASSWORD
-        schema: dsh
+        app: !!js process.env.DSH_APP_NAME ?? 'dsh'
+        schema: !!js process.env.DSH_POSTGRES_SCHEMA
+
+# ── mirrored entries: Nacos to file ────────────────────────────────────────
+#
+# Two things a deployment changes without a redeploy are read from a path, not
+# through a capability seam: the user-global `AGENTS.md` that instruction
+# discovery injects into every session's prompt, and the profile's user patch
+# layer, which the Loader re-composes from whenever it changes because the web
+# profile declares `patchReload: live`. Mirroring an entry onto each path puts
+# both under the same Nacos edit that already reaches every replica.
+#
+# The Loader reads the patch file before any plugin loads, so an entry changed
+# while the container was down lands one reload after boot rather than during
+# composition. An absent entry leaves its target untouched, so a deployment
+# that creates neither entry behaves exactly as it did before this row.
+- insert:
+    - id: nacos-file-mirror
+      name: '@deepseek-ai/dsh-nacos-file-mirror'
+      config:
+        host: !!js process.env.DSH_NACOS_HOST ?? 'nacos'
+        port: !!js Number(process.env.DSH_NACOS_PORT ?? 8848)
+        namespace: !!js process.env.DSH_NACOS_NAMESPACE ?? ''
+        group: !!js process.env.DSH_NACOS_GROUP ?? 'DEFAULT_GROUP'
+        username: !!js process.env.DSH_NACOS_USERNAME
+        password: !!js process.env.DSH_NACOS_PASSWORD
+        files:
+          - dataId: !!js (process.env.DSH_APP_NAME ?? 'dsh') + '-agents.md'
+            path: !!js (process.env.DSH_HOME ?? '/var/lib/dsh') + '/AGENTS.md'
+          - dataId: !!js (process.env.DSH_APP_NAME ?? 'dsh') + '-plugins.yml'
+            path: !!js (process.env.DSH_HOME ?? '/var/lib/dsh') + '/profiles/' + (process.env.DSH_PROFILE ?? 'web') + '/cordis.patch.yml'

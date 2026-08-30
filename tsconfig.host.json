@@ -168,6 +168,7 @@
     { "path": "./packages/nacos/credentials-nacos" },
     { "path": "./packages/session/session-persistence-postgres" },
     { "path": "./packages/storage/storage-postgres" },
+    { "path": "./packages/nacos/nacos-file-mirror" },
     { "path": "./packages/nacos/settings-nacos" },
     { "path": "./packages/settings/settings" },
     { "path": "./packages/settings/settings-file" },

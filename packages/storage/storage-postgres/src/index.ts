@@ -18,10 +18,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import pg from 'pg'
 import {
-  assertSchemaName,
   ensureSchema,
   postgresConnectionSchema,
   resolvePostgresPool,
+  resolvePostgresSchema,
 } from '@deepseek-ai/dsh-postgres-schema'
 import type { PostgresConnectionConfig } from '@deepseek-ai/dsh-postgres-schema'
 import { StorageError, UNIT_NAME_RE, storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
@@ -254,7 +254,7 @@ export const Config: z<Config> = z.object({
  */
 export async function apply(ctx: Context, config: Config): Promise<void> {
   const backendName = config.name ?? 'postgres'
-  const schema = assertSchemaName(config.schema ?? 'dsh')
+  const schema = resolvePostgresSchema(config)
   const pool = createPool(config)
   // Migration precedes registration: a consumer that resolves the backend must
   // never reach a medium whose tables do not exist yet.

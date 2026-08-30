@@ -1,8 +1,12 @@
 {
   "name": "dsh-demo-plugin",
   "version": "0.1.0",
+  "description": "Demonstration plugin: mounted from a Nacos-mirrored patch layer, writes through ctx.storage",
   "type": "module",
   "main": "index.js",
   "files": ["index.js", "cordis.patch.yml"],
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
 }

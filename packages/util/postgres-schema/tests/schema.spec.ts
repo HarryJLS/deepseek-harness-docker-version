@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { assertSchemaName, ensureSchema } from '../src/index.ts'
+import { appSchemaName, assertSchemaName, ensureSchema, resolvePostgresSchema } from '../src/index.ts'
 
 /** One error carrying a PostgreSQL SQLSTATE, as the driver reports it. */
 function pgError(code: string): Error & { code: string } {
@@ -25,6 +25,46 @@ describe('assertSchemaName', () => {
     for (const name of ['DSH', 'dsh-name', '2dsh', 'dsh"; DROP SCHEMA x; --', '', 'dsh name']) {
       expect(() => assertSchemaName(name)).toThrow(/must match/u)
     }
+  })
+})
+
+describe('appSchemaName', () => {
+  it('folds the spellings operators actually name applications with', () => {
+    expect(appSchemaName('order-svc')).toBe('order_svc')
+    expect(appSchemaName('Order Service')).toBe('order_service')
+    expect(appSchemaName('billing')).toBe('billing')
+    // Runs collapse and edges are trimmed, so neighbouring separators cannot
+    // produce a doubled or leading underscore.
+    expect(appSchemaName('-a--b-')).toBe('a_b')
+  })
+
+  it('keeps distinct names distinct', () => {
+    expect(appSchemaName('a-b')).not.toBe(appSchemaName('a-b-c'))
+  })
+
+  it('refuses a name no folding can make an identifier', () => {
+    // Repairing either of these would silently merge two apps onto one schema.
+    for (const app of ['2fa', '---', '', '9']) {
+      expect(() => appSchemaName(app)).toThrow(/folds to/u)
+    }
+  })
+})
+
+describe('resolvePostgresSchema', () => {
+  it('prefers an explicit schema over the app name', () => {
+    expect(resolvePostgresSchema({ schema: 'exact', app: 'ignored' })).toBe('exact')
+  })
+
+  it('derives the schema from the app name', () => {
+    expect(resolvePostgresSchema({ app: 'order-svc' })).toBe('order_svc')
+  })
+
+  it('falls back to the shared default when neither is set', () => {
+    expect(resolvePostgresSchema({})).toBe('dsh')
+  })
+
+  it('rejects an explicit schema that would not interpolate safely', () => {
+    expect(() => resolvePostgresSchema({ schema: 'DSH' })).toThrow(/must match/u)
   })
 })
 

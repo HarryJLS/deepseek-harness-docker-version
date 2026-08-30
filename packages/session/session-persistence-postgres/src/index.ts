@@ -33,10 +33,10 @@ import {
   type SessionPersistenceSnapshot,
 } from '@deepseek-ai/dsh-session-persistence'
 import {
-  assertSchemaName,
   postgresConnectionSchema,
   resolvePostgresDatabase,
   resolvePostgresPool,
+  resolvePostgresSchema,
 } from '@deepseek-ai/dsh-postgres-schema'
 import type { PostgresConnectionConfig } from '@deepseek-ai/dsh-postgres-schema'
 import { PostgresSessionStore } from './store.ts'
@@ -72,7 +72,7 @@ export class PostgresSessionPersistence extends SessionPersistence {
     super(ctx)
     // The schema name reaches SQL as an interpolated identifier, so a bad value
     // fails construction rather than some later query.
-    const schema = assertSchemaName(config.schema ?? 'dsh')
+    const schema = resolvePostgresSchema(config)
     this.store = new PostgresSessionStore(
       new pg.Pool(resolvePostgresPool(config)),
       schema,

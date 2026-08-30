@@ -10,8 +10,8 @@ kind: "deployment-reference"
 | 层 | 位置 | 改法 | 生效 |
 |---|---|---|---|
 | 静态配置 | `packages/bundle/docker/cordis.patch.yml` | 改文件 → 重建镜像 → 重新部署 | 下次部署 |
-| 实时配置 | Nacos 的 2 个配置条目 | Nacos 控制台改内容 | 秒级，无需重启 |
-| 运行数据 | PostgreSQL 的 6 张表（schema `dsh`） | 由程序写入，运维不直接改 | — |
+| 实时配置 | Nacos 的 5 个配置条目 | Nacos 控制台改内容 | 秒级；插件清单需重启 |
+| 运行数据 | PostgreSQL 的 6 张表（schema 由 `DSH_APP_NAME` 决定） | 由程序写入，运维不直接改 | — |
 
 ## 划分依据只有一条
 
@@ -46,7 +46,9 @@ kind: "deployment-reference"
 | `DSH_POSTGRES_URL` | 未设 | 完整连接串；设了就优先于下面的分散字段 |
 | `DSH_POSTGRES_HOST` / `_PORT` | `postgres` / `5432` | 数据库地址 |
 | `DSH_POSTGRES_DB` / `_USER` / `_PASSWORD` | `dsh` / `dsh` / 未设 | 库名与凭据 |
-| `DSH_PLUGINS` | 空 | 启动时从 npm 安装的插件清单，逗号或空格分隔 |
+| `DSH_PLUGINS` | 空 | 启动时安装的插件规格，逗号或空格分隔；与 Nacos 清单合并 |
+| `DSH_NACOS_PLUGINS_DATA_ID` | `<应用名>-plugin-roster.yml` | 插件清单条目 |
+| `DSH_NPM_REGISTRY` | 未设 | 清单条目未指定 registry 时使用的仓库 |
 
 ### 五个提供者替换
 
@@ -66,7 +68,7 @@ kind: "deployment-reference"
 
 运维随时会调、且必须立刻对所有副本生效的东西。客户端走 gRPC 长连接，服务端主动推送变更，实测发布后 10 秒内生效。
 
-### 条目一：`dsh-settings.yaml` — 用户设置
+### 条目一：`<应用名>-settings.yaml` — 用户设置
 
 YAML 映射，键是命名空间名，值是该命名空间的用户层。当前实例注册了 14 个，全部 `applies=live`（改了立即生效，无需重启）：
 
@@ -88,7 +90,7 @@ YAML 映射，键是命名空间名，值是该命名空间的用户层。当前
 
 条目里**只需写你要覆盖的命名空间**。没写的自动落回 schema 默认值与 composition base 层。当前 14 个里只有 2 个被实际覆盖，其余走默认。
 
-### 条目二：`dsh-credentials.yaml` — 凭证
+### 条目二：`<应用名>-credentials.yaml` — 凭证
 
 两个区段：`refs` 是按环境变量名索引的密钥，`records` 是授权凭据记录。
 
@@ -108,6 +110,31 @@ records:
 - `records` 区段没有上层可遮蔽，存在即事实。
 
 安全提示：这个条目存放明文密钥，Nacos 本身不额外加密。请把它放在**读权限受限的独立命名空间**，并给 Nacos 开启鉴权。
+
+### 条目三：`<应用名>-plugins.yml` — 插件补丁层
+
+被 `nacos-file-mirror` 写到 profile 的 `cordis.patch.yml`，内容是 Loader 的 patch 数组。`web` profile 声明了 `patchReload: live`，所以这个条目改了**无需重启**即可挂载、卸载、禁用或重配已安装的插件。
+
+### 条目四：`<应用名>-plugin-roster.yml` — 插件清单
+
+声明这个应用要装哪些插件，以及从哪个 npm 仓库下载：
+
+```yaml
+registry: https://npm.internal.example.com/
+packages:
+  - dsh-plugin-example@1.2.0
+  - '@acme/dsh-internal-tools'
+```
+
+清单是声明式的：删掉一行，下次启动就会卸载那个包。只有由清单装过的包会被卸载，运维手工 `dsh plugin add` 的不会被动。
+
+**改清单必须重启容器，这不是条目的限制。** Loader 在组合时一次性解析 profile 的模块，运行中新装的包它看不见——无论用什么方式请求挂载。所以安装动作放在 entrypoint、harness 启动之前。Nacos 换来的是集中编辑（不用重新部署、不用改环境变量、每个应用一个条目），不是免重启安装。
+
+**挂载则是实时的**：已安装的包，通过 `<应用名>-plugins.yml` 挂载、卸载、禁用、改配置都无需重启。注意不要 `insert` 一个已经自带 `dsh.bundle` 的包——会重复挂载，持有具名资源的插件第二次会失败。
+
+### 条目五：`<应用名>-agents.md` — 全局提示词
+
+被 mirror 写到 `$DSH_HOME/AGENTS.md`，作为用户级全局指令注入每个会话的提示词。改了对**新会话**生效。
 
 ## 第三层 · PostgreSQL 持久化
 
@@ -130,10 +157,11 @@ records:
 
 ### 建表时机
 
-六张表由运行中的容器自建，无需预先执行 DDL。三个 PG 插件共用一个 schema，而 `CREATE SCHEMA IF NOT EXISTS` 在 PostgreSQL 中**对并发创建者不是原子的**，Cordis 又是并发加载插件的——所以建 schema 的动作做了容错，竞争失败即视为成功（schema 已存在正是调用方要的结果）。
+六张表由运行中的容器自建，无需预先执行 DDL。三个 PG 插件共用该应用的 schema，而 `CREATE SCHEMA IF NOT EXISTS` 在 PostgreSQL 中**对并发创建者不是原子的**，Cordis 又是并发加载插件的——所以建 schema 的动作做了容错，竞争失败即视为成功（schema 已存在正是调用方要的结果）。
 
 ## 相关文档
 
+- [配置指导教程](CONFIGURATION-GUIDE.zh.md) — 起栈、五个条目的完整范例、多应用、插件上架、排错
 - [容器部署指南](README.md) — 运行栈、修改运行中的部署、环境变量全表
-- [Nacos 包组](../packages/nacos/README.md) — 两个实时配置提供者的设计
+- [Nacos 包组](../packages/nacos/README.md) — 实时配置提供者与文件镜像的设计
 - [docker bundle](../packages/bundle/docker/README.md) — 这一层 patch 本身的说明

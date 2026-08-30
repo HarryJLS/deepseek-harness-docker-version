@@ -24,10 +24,10 @@ readable *before* a remote configuration source can be contacted?
 
 | Class | Holds | Where | Changing it |
 |---|---|---|---|
-| Static | bind host/port, access gates, Nacos + PostgreSQL coordinates, which plugins are mounted | `cordis.patch.yml` in the image | rebuild and redeploy |
+| Static | bind host/port, access gates, Nacos + PostgreSQL coordinates, application name, which plugins are mounted | `cordis.patch.yml` in the image | rebuild and redeploy |
 | Live | model routes and every user-settings namespace | Nacos `dsh-settings.yaml` | edit in the Nacos console |
 | Live | API keys and authorization grants | Nacos `dsh-credentials.yaml` | edit in the Nacos console |
-| Live | the plugin roster | `DSH_PLUGINS` | restart the container |
+| Live | the plugin roster | Nacos `<app>-plugin-roster.yml`, or `DSH_PLUGINS` | restart the container |
 
 ## Durable state
 
@@ -83,16 +83,46 @@ process environment still outranks the stored credential document, so a key
 supplied through the container's environment stays authoritative and a write
 beneath it is refused rather than silently ignored.
 
-**Plugins.** Set `DSH_PLUGINS` to a comma- or space-separated list of package
-specs and restart the container. Each is installed from the registry into the
-profile; a package declaring `dsh.bundle` also becomes an active configuration
-layer. One that does not is installed as a plain dependency and says so in the
-log.
+**Plugins.** Declare the roster in the Nacos entry `<app>-plugin-roster.yml` and
+restart the container:
+
+```yaml
+registry: https://npm.internal.example.com/
+packages:
+  - dsh-plugin-example@1.2.0
+  - '@acme/dsh-internal-tools'
+```
+
+Each spec is installed into the profile from `registry` (else `DSH_NPM_REGISTRY`,
+else pnpm's default). A package declaring `dsh.bundle` also becomes an active
+configuration layer; one that does not is installed as a plain dependency and
+says so in the log.
+
+The roster is declarative for the packages it installs: dropping a line
+uninstalls that package on the next start. Only packages a previous start
+installed from the roster are removed — one an operator added by hand with
+`dsh plugin add` is left alone.
+
+`DSH_PLUGINS` still works and is merged with the entry, for a deployment that
+pins its plugins to the image's environment rather than to Nacos:
 
 ```yaml
 environment:
   DSH_PLUGINS: 'dsh-plugin-example@1.2.0 @acme/dsh-internal-tools'
 ```
+
+**A roster change needs a restart, and that is not a limitation of the entry.**
+The Loader resolves a profile's modules once, at composition: a package
+installed into a running process is not mountable by it, however the mount is
+requested. The install therefore runs in the entrypoint, before the harness
+starts. What Nacos buys is central editing — no redeploy, no environment change,
+one entry per application — not a restart-free install.
+
+Mounting is a different matter and IS live: for a package already installed,
+`<app>-plugins.yml` mounts, unmounts, disables, and reconfigures it without a
+restart. Do not `insert` a package that already declares its own `dsh.bundle` —
+it would mount twice, and a plugin holding a named resource fails the second
+time.
 
 **Anything static.** Edit the bundle patch, rebuild, redeploy.
 
@@ -101,14 +131,20 @@ environment:
 | Variable | Default | Meaning |
 |---|---|---|
 | `DSH_PORT` | `3080` | listen port inside the container |
+| `DSH_APP_NAME` | `dsh` | names this application; selects the PostgreSQL schema and prefixes the Nacos entries |
 | `DSH_NACOS_HOST` / `DSH_NACOS_PORT` | `nacos` / `8848` | Nacos address; the gRPC port is derived |
 | `DSH_NACOS_NAMESPACE` / `DSH_NACOS_GROUP` | `` / `DEFAULT_GROUP` | Nacos namespace and group |
-| `DSH_NACOS_SETTINGS_DATA_ID` | `dsh-settings.yaml` | settings entry |
-| `DSH_NACOS_CREDENTIALS_DATA_ID` | `dsh-credentials.yaml` | credentials entry |
+| `DSH_NACOS_SETTINGS_DATA_ID` | `<app>-settings.yaml` | settings entry |
+| `DSH_NACOS_CREDENTIALS_DATA_ID` | `<app>-credentials.yaml` | credentials entry |
 | `DSH_NACOS_USERNAME` / `DSH_NACOS_PASSWORD` | unset | Nacos auth, when enabled |
 | `DSH_POSTGRES_URL` | unset | full connection string; wins over the discrete fields |
 | `DSH_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `postgres` / `5432` / `dsh` / `dsh` / unset | discrete connection fields |
-| `DSH_PLUGINS` | empty | plugin roster installed at start |
+| `DSH_POSTGRES_SCHEMA` | derived from `DSH_APP_NAME` | overrides the derived schema with an exact name |
+| `DSH_PLUGINS` | empty | plugin specs installed at start, merged with the Nacos roster |
+| `DSH_NACOS_PLUGINS_DATA_ID` | `<app>-plugin-roster.yml` | roster entry |
+| `DSH_NPM_REGISTRY` | unset | registry used when the roster entry names none |
+
+- [Configuration guide (zh)](CONFIGURATION-GUIDE.zh.md) — step-by-step setup, every Nacos entry with a worked example, multi-application deployment, plugin publishing, and troubleshooting.
 
 ## Operational notes
 
@@ -118,5 +154,15 @@ environment:
   deployment.
 - **The database is the single source of truth for sessions.** Several replicas
   may share one database; each keeps its own derived variant cache.
+- **Several applications may share one database and one Nacos server.** Give
+  each a distinct `DSH_APP_NAME`: its tables land in a schema of that name and
+  it reads its own pair of Nacos entries. They must not share a schema —
+  `kv_record`'s primary key is `(unit, tbl, key)` and carries no application
+  column, so two applications writing the same unit overwrite each other. The
+  database role needs `CREATE` on the database to make each schema on first
+  start.
+- **Renaming an application does not migrate it.** A changed `DSH_APP_NAME`
+  points the container at an empty schema and at Nacos entries that do not
+  exist yet; the previous ones are left in place.
 - **`prepare-profile.mjs` runs before the harness** and is idempotent: a
   restarted container with an unchanged roster converges on the same profile.

@@ -1,3 +1,9 @@
+# The demo plugin's own bundle layer, applied when the package is installed
+# through `DSH_PLUGINS`. Installing the package is what makes the module
+# resolvable; this layer is what mounts it.
+#
+# A deployment that instead mounts the plugin from the Nacos-mirrored patch
+# entry gets the same row without a restart — see deploy/README.md.
 - insert:
     - id: demo-plugin
       name: dsh-demo-plugin

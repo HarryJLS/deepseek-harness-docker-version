@@ -79,10 +79,16 @@ services:
       nacos:
         condition: service_healthy
     environment:
+      # Names this application. It selects the PostgreSQL schema the tables live
+      # in and prefixes the Nacos entries this container reads, so several
+      # applications built on one image share the database and the Nacos server
+      # without sharing a row. Changing it points the container at a different
+      # schema and a different pair of Nacos entries — the old ones are left
+      # untouched, not migrated.
+      DSH_APP_NAME: ${DSH_APP_NAME:-dsh}
       DSH_NACOS_HOST: nacos
       DSH_NACOS_PORT: '8848'
       DSH_NACOS_GROUP: DEFAULT_GROUP
-      DSH_NACOS_SETTINGS_DATA_ID: dsh-settings.yaml
       DSH_POSTGRES_HOST: postgres
       DSH_POSTGRES_PORT: '5432'
       DSH_POSTGRES_DB: dsh

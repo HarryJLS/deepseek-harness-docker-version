@@ -1330,6 +1330,9 @@ importers:
       '@deepseek-ai/dsh-credentials-nacos':
         specifier: workspace:^
         version: link:../../nacos/credentials-nacos
+      '@deepseek-ai/dsh-nacos-file-mirror':
+        specifier: workspace:^
+        version: link:../../nacos/nacos-file-mirror
       '@deepseek-ai/dsh-session-persistence-postgres':
         specifier: workspace:^
         version: link:../../session/session-persistence-postgres
@@ -6730,6 +6733,22 @@ importers:
       '@deepseek-ai/dsh-invariants':
         specifier: workspace:^
         version: link:../../runtime-diagnostics/invariants
+
+  packages/nacos/nacos-file-mirror:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: link:../../../vendor/schemastery
+        version: link:../../../vendor/schemastery
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:^
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-invariants':
+        specifier: workspace:^
+        version: link:../../runtime-diagnostics/invariants
+      '@deepseek-ai/dsh-nacos-client':
+        specifier: workspace:^
+        version: link:../nacos-client
 
   packages/nacos/settings-nacos:
     dependencies:

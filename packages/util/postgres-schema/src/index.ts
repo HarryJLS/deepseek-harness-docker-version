@@ -64,6 +64,50 @@ export function assertSchemaName(value: string): string {
 }
 
 /**
+ * Normalize an application name into a schema identifier: lowercased, with each
+ * run of characters outside `[a-z0-9]` folded to a single `_`. Folding is what
+ * lets a deployment name an app the way its operators already do (`order-svc`,
+ * `Order Service`) without every one of them having to know PostgreSQL's
+ * identifier rules.
+ *
+ * A name that still cannot be an identifier after folding — one starting with a
+ * digit, or empty once folded — is rejected rather than repaired, because every
+ * repair would silently merge two distinct app names onto one schema.
+ * @param app - the configured application name.
+ * @returns the schema identifier the app's tables live in.
+ * @throws when the folded name is not a legal identifier.
+ */
+export function appSchemaName(app: string): string {
+  const folded = app.toLowerCase().replace(/[^a-z0-9]+/gu, '_').replace(/^_+|_+$/gu, '')
+  if (!SCHEMA_NAME_RE.test(folded)) {
+    throw new Error(
+      `postgres app name ${JSON.stringify(app)} folds to ${JSON.stringify(folded)}, `
+      + `which must match ${String(SCHEMA_NAME_RE)} — start it with a letter`,
+    )
+  }
+  return folded
+}
+
+/**
+ * Resolve which schema one plugin's tables live in. An explicit `schema` wins,
+ * then the normalized `app` name, then the shared `dsh` default — so a single
+ * image serves several applications against one database by setting `app` alone,
+ * and a deployment that needs an exact schema name still names it directly.
+ *
+ * Every PostgreSQL plugin calls this instead of defaulting inline, so one
+ * database cannot end up with the same plugin writing two different schemas
+ * depending on which package resolved the value.
+ * @param config - the plugin's connection fields.
+ * @returns the validated schema name, safe to interpolate into a statement.
+ * @throws when the configured schema or app name is not a legal identifier.
+ */
+export function resolvePostgresSchema(config: PostgresConnectionConfig): string {
+  if (config.schema !== undefined) return assertSchemaName(config.schema)
+  if (config.app !== undefined) return appSchemaName(config.app)
+  return DEFAULTS.schema
+}
+
+/**
  * Create one schema, tolerating a concurrent creator.
  * @param pool - anything that can run a statement.
  * @param schema - schema name, already validated by {@link assertSchemaName}.
@@ -95,7 +139,13 @@ export interface PostgresConnectionConfig {
   user?: string
   /** Role password. */
   password?: string
-  /** Schema holding this plugin's tables, created when absent. Default: `dsh`. */
+  /**
+   * Application name isolating one deployment's tables from another's in a
+   * shared database. Normalized to a schema name by
+   * {@link resolvePostgresSchema}; ignored when `schema` is set explicitly.
+   */
+  app?: string
+  /** Schema holding this plugin's tables, created when absent. Derived from `app`, else `dsh`. */
   schema?: string
   /** Maximum pooled connections. Default: 10. */
   poolSize?: number
@@ -116,7 +166,7 @@ export interface PostgresPoolOptions {
 }
 
 /** Defaults applied when a field is omitted; stated once, never inline. */
-const DEFAULTS = { host: 'postgres', port: 5432, database: 'dsh', user: 'dsh', poolSize: 10 }
+const DEFAULTS = { host: 'postgres', port: 5432, database: 'dsh', user: 'dsh', poolSize: 10, schema: 'dsh' }
 
 /**
  * Resolve one connection config into pool options.
@@ -160,6 +210,7 @@ export const postgresConnectionSchema = {
   database: z.string().default(DEFAULTS.database),
   user: z.string().default(DEFAULTS.user),
   password: z.string().role('secret'),
-  schema: z.string().default('dsh'),
+  app: z.string(),
+  schema: z.string(),
   poolSize: z.natural().min(1).default(DEFAULTS.poolSize),
 }

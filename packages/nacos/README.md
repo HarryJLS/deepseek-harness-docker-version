@@ -25,6 +25,7 @@ The Nacos group lets a deployment serve the harness's live configuration from a 
 | [`nacos-client`](nacos-client/README.md) | Speaks the Nacos gRPC client protocol and holds one entry open as a live document | none (library) |
 | [`settings-nacos`](settings-nacos/README.md) | Serves the user-settings document from one Nacos entry | `ctx.settings` |
 | [`credentials-nacos`](credentials-nacos/README.md) | Serves credentials from one Nacos entry, under the process environment | `ctx.credentials` |
+| [`nacos-file-mirror`](nacos-file-mirror/README.md) | Writes Nacos entries to files whose consumers read a path, not a seam | none (effect only) |
 
 -----
 
@@ -34,6 +35,8 @@ The Nacos group lets a deployment serve the harness's live configuration from a 
 A value belongs in Nacos when it can change while the deployment runs and the change should reach every replica. A value does NOT belong here when it must be readable before the Nacos connection exists — the bind address, the Nacos coordinates themselves, and the database URL are all in that class, and reading them from Nacos would be circular. Those stay in the composition that ships with the image.
 
 The two providers replace the file-backed ones through their capability seams, so every consumer is unchanged: the Models page, the LLM adapters, and the agent default model all keep reading the same resolved namespaces.
+
+Not every live value has a seam to replace. The user-global `AGENTS.md` and a profile's user patch layer are read from a path, so `nacos-file-mirror` puts them under the same Nacos edit by writing the file instead of serving the value.
 
 -----
 

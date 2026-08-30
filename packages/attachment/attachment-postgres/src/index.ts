@@ -28,10 +28,10 @@ import z from '@deepseek-ai/schemastery'
 import pg from 'pg'
 import { AttachmentError, AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import {
-  assertSchemaName,
   ensureSchema,
   postgresConnectionSchema,
   resolvePostgresPool,
+  resolvePostgresSchema,
 } from '@deepseek-ai/dsh-postgres-schema'
 import type { PostgresConnectionConfig } from '@deepseek-ai/dsh-postgres-schema'
 import type {
@@ -119,7 +119,7 @@ export class PostgresAttachmentStore extends AttachmentStore {
 
   constructor(ctx: Context, public config: Config) {
     super(ctx)
-    this.schema = assertSchemaName(config.schema ?? 'dsh')
+    this.schema = resolvePostgresSchema(config)
     this.imageLimits = {
       maxImageBytes: config.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES,
       maxImagesPerMessage: config.maxImagesPerMessage ?? DEFAULT_MAX_IMAGES_PER_MESSAGE,

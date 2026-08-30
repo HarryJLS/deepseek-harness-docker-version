@@ -28,7 +28,7 @@ interface PatchRow {
   id?: string
   name?: string
   disabled?: boolean
-  insert?: { id: string; name: string }[]
+  insert?: { id: string; name: string; config?: Record<string, unknown> }[]
 }
 
 const patch = parse(
@@ -94,5 +94,33 @@ describe('network exposure', () => {
       { config?: { allowAnyHost?: boolean; requireAuth?: boolean } } | undefined
     expect(connection?.config?.allowAnyHost).toBe(true)
     expect(connection?.config?.requireAuth).toBe(false)
+  })
+})
+
+describe('application scoping', () => {
+  /** Every inserted row that owns tables in the database. */
+  const postgresRows = inserted.filter(row => row.name?.endsWith('-postgres') === true)
+
+  it('scopes every PostgreSQL row by the application name', () => {
+    // Half-scoping is the quiet failure: one plugin reading the app schema
+    // while another still writes `dsh` splits one deployment's state across two
+    // schemas, and nothing reports it until a session cannot find its own rows.
+    expect(postgresRows.length).toBe(3)
+    for (const row of postgresRows) {
+      expect(row.config?.app, `${row.id} is not scoped by DSH_APP_NAME`)
+        .toContain('DSH_APP_NAME')
+    }
+  })
+
+  it('reads the Nacos entries under the same application name', () => {
+    // One application name has to move both backends together; a container
+    // whose tables are scoped but whose settings entry is not would read
+    // another application's model routes.
+    const nacosRows = inserted.filter(row => row.name?.endsWith('-nacos') === true)
+    expect(nacosRows.length).toBe(2)
+    for (const row of nacosRows) {
+      expect(row.config?.dataId, `${row.id} is not scoped by DSH_APP_NAME`)
+        .toContain('DSH_APP_NAME')
+    }
   })
 })
