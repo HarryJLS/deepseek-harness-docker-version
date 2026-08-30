@@ -34,8 +34,8 @@ const DSH_BIN = process.env.DSH_BIN ?? '/app/apps/cli/lib/bin.js'
 const PROFILE = process.env.DSH_PROFILE ?? 'web'
 const HOME_DIR = process.env.DSH_HOME ?? '/var/lib/dsh'
 const CONTAINER_BUNDLE = '@deepseek-ai/dsh-bundle-docker'
-const APP = process.env.DSH_APP_NAME ?? 'dsh'
 const NACOS_CLIENT = '/app/packages/nacos/nacos-client/lib/index.js'
+const ENV_FILE = process.env.DSH_RESOLVED_ENV ?? '/run/dsh-resolved.env'
 const YAML_MODULE = '/app/packages/bundle/docker/node_modules/yaml/dist/index.js'
 
 const profileDir = join(HOME_DIR, 'profiles', PROFILE)
@@ -102,12 +102,9 @@ function splitSpecs(value) {
  *
  * @returns the declared registry (or undefined) and package specs.
  */
-async function nacosRoster() {
+async function readNacosEntries(dataIds) {
   const host = process.env.DSH_NACOS_HOST
-  if (host === undefined || host === '') return { packages: [] }
-  const dataId = process.env.DSH_NACOS_PLUGINS_DATA_ID ?? `${APP}-plugin-roster.yml`
-
-  let content
+  if (host === undefined || host === '') return {}
   const { NacosConfigClient } = await import(NACOS_CLIENT)
   const client = new NacosConfigClient({
     host,
@@ -117,23 +114,72 @@ async function nacosRoster() {
     ...process.env.DSH_NACOS_PASSWORD !== undefined && { password: process.env.DSH_NACOS_PASSWORD },
   })
   client.setErrorHandler(error => {
-    console.warn(`entrypoint: nacos roster read failed: ${String(error)}`)
+    console.warn(`entrypoint: nacos read failed: ${String(error)}`)
   })
+  const group = process.env.DSH_NACOS_GROUP ?? 'DEFAULT_GROUP'
+  const out = {}
   try {
     await client.connect()
-    const value = await client.read({
-      dataId,
-      group: process.env.DSH_NACOS_GROUP ?? 'DEFAULT_GROUP',
-    })
-    content = value.content
+    for (const dataId of dataIds) {
+      out[dataId] = (await client.read({ dataId, group })).content
+    }
   } catch (error) {
-    console.warn(`entrypoint: cannot reach Nacos for ${dataId}; continuing without it (${String(error)})`)
-    return { packages: [] }
+    console.warn(`entrypoint: cannot reach Nacos; continuing without it (${String(error)})`)
+    return {}
   } finally {
     client.close()
   }
+  return out
+}
 
-  if (content === undefined || content.trim() === '') return { packages: [] }
+/**
+ * The application name, which scopes this deployment's PostgreSQL schema.
+ *
+ * The settings entry is the declaring home: an application owns its Nacos, so
+ * naming itself there keeps its whole identity in one place and leaves the
+ * container's environment to say only where Nacos and the database are. The
+ * environment variable remains the fallback, for a deployment that has no
+ * settings entry yet or pins the name outside Nacos.
+ *
+ * Read once, here, because the schema is chosen when each PostgreSQL plugin
+ * opens its pool: a later change cannot move tables that are already open, so
+ * it takes effect on the next start rather than pretending to be live.
+ * @param content - the settings entry body, or undefined when absent.
+ * @returns the resolved application name.
+ */
+async function resolveAppName(content) {
+  if (content !== undefined && content.trim() !== '') {
+    const { parse } = await import(YAML_MODULE)
+    const document = parse(content)
+    const declared = document?.deployment?.appName
+    if (typeof declared === 'string' && declared.trim() !== '') {
+      console.log(`entrypoint: deployment.appName = ${declared.trim()} (from the settings entry)`)
+      return declared.trim()
+    }
+  }
+  return process.env.DSH_APP_NAME ?? 'dsh'
+}
+
+/**
+ * Publish the resolved name to the environment the harness will start with.
+ *
+ * The entrypoint sources this file before `exec`, because a variable this
+ * script sets cannot reach a sibling process: the harness reads `DSH_APP_NAME`
+ * through the `!!js` expressions in its composition, so the value has to be in
+ * the environment rather than passed as an argument.
+ * @param appName - the resolved application name.
+ */
+function publishResolvedEnv(appName) {
+  writeFileSync(ENV_FILE, `export DSH_APP_NAME=${JSON.stringify(appName)}\n`)
+}
+
+/**
+ * Parse the Nacos-declared plugin roster.
+ * @param content - the roster entry body, or undefined when absent.
+ * @param dataId - the entry name, for diagnostics.
+ * @returns the declared registry, token, and package specs.
+ */
+async function parseRoster(content, dataId) {
   const { parse } = await import(YAML_MODULE)
   const document = parse(content)
   if (document === null || typeof document !== 'object' || Array.isArray(document)) {
@@ -271,6 +317,12 @@ function rememberRoster(packages) {
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
+const SETTINGS_DATA_ID = process.env.DSH_NACOS_SETTINGS_DATA_ID ?? 'dsh-settings.yaml'
+const ROSTER_DATA_ID = process.env.DSH_NACOS_PLUGINS_DATA_ID ?? 'dsh-plugin-roster.yml'
+
 ensureProfile()
 selectContainerBundle()
-installRoster(await nacosRoster())
+
+const entries = await readNacosEntries([SETTINGS_DATA_ID, ROSTER_DATA_ID])
+publishResolvedEnv(await resolveAppName(entries[SETTINGS_DATA_ID]))
+installRoster(await parseRoster(entries[ROSTER_DATA_ID], ROSTER_DATA_ID))

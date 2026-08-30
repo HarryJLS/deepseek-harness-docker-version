@@ -8,4 +8,13 @@ set -e
 
 node /usr/local/bin/prepare-profile.mjs
 
+# The application name is declared in the Nacos settings entry, which only the
+# preparation step above can read. A variable it exports cannot reach a sibling
+# process, so it writes the resolved value here and this shell sources it into
+# the environment the harness inherits.
+DSH_RESOLVED_ENV="${DSH_RESOLVED_ENV:-/run/dsh-resolved.env}"
+if [ -f "${DSH_RESOLVED_ENV}" ]; then
+  . "${DSH_RESOLVED_ENV}"
+fi
+
 exec node "${DSH_BIN}" --profile "${DSH_PROFILE}" --no-open "$@"

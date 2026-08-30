@@ -11,7 +11,7 @@ kind: "deployment-reference"
 |---|---|---|---|
 | 静态配置 | `packages/bundle/docker/cordis.patch.yml` | 改文件 → 重建镜像 → 重新部署 | 下次部署 |
 | 实时配置 | Nacos 的 5 个配置条目 | Nacos 控制台改内容 | 秒级；插件清单需重启 |
-| 运行数据 | PostgreSQL 的 6 张表（schema 由 `DSH_APP_NAME` 决定） | 由程序写入，运维不直接改 | — |
+| 运行数据 | PostgreSQL 的 6 张表（schema 由 `deployment.appName` 决定） | 由程序写入，运维不直接改 | — |
 
 ## 划分依据只有一条
 
@@ -47,7 +47,7 @@ kind: "deployment-reference"
 | `DSH_POSTGRES_HOST` / `_PORT` | `postgres` / `5432` | 数据库地址 |
 | `DSH_POSTGRES_DB` / `_USER` / `_PASSWORD` | `dsh` / `dsh` / 未设 | 库名与凭据 |
 | `DSH_PLUGINS` | 空 | 启动时安装的插件规格，逗号或空格分隔；与 Nacos 清单合并 |
-| `DSH_NACOS_PLUGINS_DATA_ID` | `<应用名>-plugin-roster.yml` | 插件清单条目 |
+| `DSH_NACOS_PLUGINS_DATA_ID` | `dsh-plugin-roster.yml` | 插件清单条目 |
 | `DSH_NPM_REGISTRY` | 未设 | 清单条目未指定 registry 时使用的仓库 |
 
 ### 五个提供者替换
@@ -68,7 +68,7 @@ kind: "deployment-reference"
 
 运维随时会调、且必须立刻对所有副本生效的东西。客户端走 gRPC 长连接，服务端主动推送变更，实测发布后 10 秒内生效。
 
-### 条目一：`<应用名>-settings.yaml` — 用户设置
+### 条目一：`dsh-settings.yaml` — 用户设置
 
 YAML 映射，键是命名空间名，值是该命名空间的用户层。当前实例注册了 14 个，全部 `applies=live`（改了立即生效，无需重启）：
 
@@ -90,7 +90,7 @@ YAML 映射，键是命名空间名，值是该命名空间的用户层。当前
 
 条目里**只需写你要覆盖的命名空间**。没写的自动落回 schema 默认值与 composition base 层。当前 14 个里只有 2 个被实际覆盖，其余走默认。
 
-### 条目二：`<应用名>-credentials.yaml` — 凭证
+### 条目二：`dsh-credentials.yaml` — 凭证
 
 两个区段：`refs` 是按环境变量名索引的密钥，`records` 是授权凭据记录。
 
@@ -111,11 +111,11 @@ records:
 
 安全提示：这个条目存放明文密钥，Nacos 本身不额外加密。请把它放在**读权限受限的独立命名空间**，并给 Nacos 开启鉴权。
 
-### 条目三：`<应用名>-plugins.yml` — 插件补丁层
+### 条目三：`dsh-plugins.yml` — 插件补丁层
 
 被 `nacos-file-mirror` 写到 profile 的 `cordis.patch.yml`，内容是 Loader 的 patch 数组。`web` profile 声明了 `patchReload: live`，所以这个条目改了**无需重启**即可挂载、卸载、禁用或重配已安装的插件。
 
-### 条目四：`<应用名>-plugin-roster.yml` — 插件清单
+### 条目四：`dsh-plugin-roster.yml` — 插件清单
 
 声明这个应用要装哪些插件，以及从哪个 npm 仓库下载：
 
@@ -130,9 +130,9 @@ packages:
 
 **改清单必须重启容器，这不是条目的限制。** Loader 在组合时一次性解析 profile 的模块，运行中新装的包它看不见——无论用什么方式请求挂载。所以安装动作放在 entrypoint、harness 启动之前。Nacos 换来的是集中编辑（不用重新部署、不用改环境变量、每个应用一个条目），不是免重启安装。
 
-**挂载则是实时的**：已安装的包，通过 `<应用名>-plugins.yml` 挂载、卸载、禁用、改配置都无需重启。注意不要 `insert` 一个已经自带 `dsh.bundle` 的包——会重复挂载，持有具名资源的插件第二次会失败。
+**挂载则是实时的**：已安装的包，通过 `dsh-plugins.yml` 挂载、卸载、禁用、改配置都无需重启。注意不要 `insert` 一个已经自带 `dsh.bundle` 的包——会重复挂载，持有具名资源的插件第二次会失败。
 
-### 条目五：`<应用名>-agents.md` — 全局提示词
+### 条目五：`dsh-agents.md` — 全局提示词
 
 被 mirror 写到 `$DSH_HOME/AGENTS.md`，作为用户级全局指令注入每个会话的提示词。改了对**新会话**生效。
 

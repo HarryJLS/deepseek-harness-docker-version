@@ -112,15 +112,16 @@ describe('application scoping', () => {
     }
   })
 
-  it('reads the Nacos entries under the same application name', () => {
-    // One application name has to move both backends together; a container
-    // whose tables are scoped but whose settings entry is not would read
-    // another application's model routes.
+  it('names every Nacos entry the same in every deployment', () => {
+    // An application owns its Nacos, so the entries carry no application name:
+    // one image must not make each deployment invent its own entry names, and
+    // an application-prefixed data id would do exactly that. The database is
+    // the backend applications share, so it is the only one scoped above.
     const nacosRows = inserted.filter(row => row.name?.endsWith('-nacos') === true)
     expect(nacosRows.length).toBe(2)
     for (const row of nacosRows) {
-      expect(row.config?.dataId, `${row.id} is not scoped by DSH_APP_NAME`)
-        .toContain('DSH_APP_NAME')
+      expect(row.config?.dataId, `${row.id} must not name the application`)
+        .not.toContain('DSH_APP_NAME')
     }
   })
 })

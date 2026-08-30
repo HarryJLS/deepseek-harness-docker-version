@@ -14,11 +14,18 @@
 # Connection details are read from the environment so one image serves every
 # environment; `!!js` expressions are evaluated by the Loader.
 #
-# `DSH_APP_NAME` scopes both backends at once: it names the PostgreSQL schema
-# each plugin's tables live in, and prefixes the Nacos entries this container
-# reads. Several applications built on this image therefore share one database
-# and one Nacos server without sharing a row — `kv_record`'s primary key is
-# (unit, tbl, key), which collides across applications in a single schema.
+# Every entry this container reads is named the same in every deployment, so an
+# application built on this image needs no naming decision of its own: each
+# application owns its Nacos (its own namespace or server), and that ownership
+# is what separates one application's configuration from another's.
+#
+# The database is the one backend applications DO share, so it is the one thing
+# that must be scoped: `DSH_APP_NAME` names the PostgreSQL schema each plugin's
+# tables live in. `kv_record`'s primary key is (unit, tbl, key) and carries no
+# application column, so two applications in one schema overwrite each other.
+# The name is resolved by the entrypoint — from the settings entry's
+# `deployment.appName`, else this variable — and reaches the rows below as an
+# ordinary environment variable.
 #
 # A patch replaces a row's whole `config`, so each row below restates every key
 # it owns, and a provider swap is a `disabled` plus an `insert` rather than a
@@ -75,7 +82,7 @@
         port: !!js Number(process.env.DSH_NACOS_PORT ?? 8848)
         namespace: !!js process.env.DSH_NACOS_NAMESPACE ?? ''
         group: !!js process.env.DSH_NACOS_GROUP ?? 'DEFAULT_GROUP'
-        dataId: !!js process.env.DSH_NACOS_SETTINGS_DATA_ID ?? `${process.env.DSH_APP_NAME ?? 'dsh'}-settings.yaml`
+        dataId: !!js process.env.DSH_NACOS_SETTINGS_DATA_ID ?? 'dsh-settings.yaml'
         username: !!js process.env.DSH_NACOS_USERNAME
         password: !!js process.env.DSH_NACOS_PASSWORD
         writable: true
@@ -157,7 +164,7 @@
         port: !!js Number(process.env.DSH_NACOS_PORT ?? 8848)
         namespace: !!js process.env.DSH_NACOS_NAMESPACE ?? ''
         group: !!js process.env.DSH_NACOS_GROUP ?? 'DEFAULT_GROUP'
-        dataId: !!js process.env.DSH_NACOS_CREDENTIALS_DATA_ID ?? `${process.env.DSH_APP_NAME ?? 'dsh'}-credentials.yaml`
+        dataId: !!js process.env.DSH_NACOS_CREDENTIALS_DATA_ID ?? 'dsh-credentials.yaml'
         username: !!js process.env.DSH_NACOS_USERNAME
         password: !!js process.env.DSH_NACOS_PASSWORD
 
@@ -208,7 +215,7 @@
         username: !!js process.env.DSH_NACOS_USERNAME
         password: !!js process.env.DSH_NACOS_PASSWORD
         files:
-          - dataId: !!js (process.env.DSH_APP_NAME ?? 'dsh') + '-agents.md'
+          - dataId: !!js process.env.DSH_NACOS_AGENTS_DATA_ID ?? 'dsh-agents.md'
             path: !!js (process.env.DSH_HOME ?? '/var/lib/dsh') + '/AGENTS.md'
-          - dataId: !!js (process.env.DSH_APP_NAME ?? 'dsh') + '-plugins.yml'
+          - dataId: !!js process.env.DSH_NACOS_PATCH_DATA_ID ?? 'dsh-plugins.yml'
             path: !!js (process.env.DSH_HOME ?? '/var/lib/dsh') + '/profiles/' + (process.env.DSH_PROFILE ?? 'web') + '/cordis.patch.yml'

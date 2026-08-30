@@ -1,0 +1,555 @@
+<title>DSH 容器部署手册</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<style>
+:root{
+  --ground:#fbfcfd; --surface:#f1f4f8; --surface-2:#e7edf3;
+  --ink:#141d27; --ink-mid:#42525f; --ink-soft:#6c7d8b;
+  --rule:#d9e1e9; --rule-soft:#e8eef4;
+  --accent:#1c5b8c; --accent-soft:#e8f0f7;
+  --live:#1f6d4d; --live-soft:#e4f1eb;
+  --restart:#9c5a06; --restart-soft:#faeedd;
+  --danger:#a03232; --danger-soft:#f9e8e8;
+  --code-bg:#eef2f6;
+  --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --serif:"IBM Plex Serif",Georgia,"Songti SC",serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#10161d; --surface:#18212b; --surface-2:#202c38;
+    --ink:#e6edf3; --ink-mid:#b3c1cd; --ink-soft:#8395a4;
+    --rule:#2a3946; --rule-soft:#222f3b;
+    --accent:#6aaddf; --accent-soft:#152c3f;
+    --live:#67c9a0; --live-soft:#122b22;
+    --restart:#e0a45f; --restart-soft:#2e2314;
+    --danger:#e08585; --danger-soft:#2e1a1a;
+    --code-bg:#1b2530;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#10161d; --surface:#18212b; --surface-2:#202c38;
+  --ink:#e6edf3; --ink-mid:#b3c1cd; --ink-soft:#8395a4;
+  --rule:#2a3946; --rule-soft:#222f3b;
+  --accent:#6aaddf; --accent-soft:#152c3f;
+  --live:#67c9a0; --live-soft:#122b22;
+  --restart:#e0a45f; --restart-soft:#2e2314;
+  --danger:#e08585; --danger-soft:#2e1a1a;
+  --code-bg:#1b2530;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);line-height:1.7;
+  -webkit-font-smoothing:antialiased;font-size:15px}
+.wrap{display:grid;grid-template-columns:250px minmax(0,1fr);gap:56px;
+  max-width:1180px;margin:0 auto;padding:0 32px}
+nav.toc{position:sticky;top:0;align-self:start;max-height:100vh;overflow-y:auto;
+  padding:44px 0 44px;border-right:1px solid var(--rule-soft)}
+nav.toc .brand{font-family:var(--serif);font-weight:600;font-size:17px;line-height:1.35;
+  margin:0 0 4px;letter-spacing:-.01em}
+nav.toc .sub{color:var(--ink-soft);font-size:12.5px;margin:0 0 24px}
+nav.toc ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1px}
+nav.toc a{display:flex;gap:9px;padding:6px 10px 6px 8px;border-radius:5px;text-decoration:none;
+  color:var(--ink-mid);font-size:13.5px;border-left:2px solid transparent}
+nav.toc a:hover{background:var(--surface);color:var(--ink)}
+nav.toc a .n{color:var(--ink-soft);font-family:var(--mono);font-size:12px;min-width:14px}
+nav.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+main{padding:44px 0 120px;min-width:0}
+header.top{padding-bottom:28px;margin-bottom:40px;border-bottom:2px solid var(--rule)}
+header.top h1{font-family:var(--serif);font-weight:600;font-size:33px;line-height:1.25;
+  margin:0 0 12px;letter-spacing:-.015em;text-wrap:balance}
+header.top p{margin:0;color:var(--ink-mid);max-width:64ch}
+section{margin-bottom:68px;scroll-margin-top:24px}
+h2{font-family:var(--serif);font-weight:600;font-size:23px;margin:0 0 6px;
+  letter-spacing:-.01em;text-wrap:balance;display:flex;align-items:baseline;gap:11px}
+h2 .n{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:500}
+h2+.lede{color:var(--ink-mid);margin:0 0 22px;max-width:66ch}
+h3{font-family:var(--sans);font-weight:600;font-size:16px;margin:32px 0 10px;
+  color:var(--ink);text-wrap:balance}
+h4{font-size:14px;font-weight:600;margin:22px 0 8px;color:var(--ink-mid)}
+p{margin:0 0 14px;max-width:70ch}
+ul,ol.body{margin:0 0 14px;padding-left:22px;max-width:70ch}
+li{margin-bottom:5px}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:var(--code-bg);
+  padding:.1em .36em;border-radius:3px;word-break:break-word}
+pre{background:var(--code-bg);border:1px solid var(--rule-soft);border-radius:7px;
+  padding:15px 17px;overflow-x:auto;margin:0 0 16px;line-height:1.6}
+pre code{background:none;padding:0;font-size:12.9px}
+.scroll{overflow-x:auto;margin:0 0 18px;border:1px solid var(--rule);border-radius:7px}
+table{border-collapse:collapse;width:100%;font-size:13.6px}
+th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+th{background:var(--surface);font-weight:600;font-size:12.5px;letter-spacing:.02em;
+  color:var(--ink-mid);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+td code{white-space:nowrap}
+.num{font-variant-numeric:tabular-nums}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;
+  padding:2px 8px;border-radius:20px;white-space:nowrap;letter-spacing:.01em}
+.chip.live{background:var(--live-soft);color:var(--live)}
+.chip.restart{background:var(--restart-soft);color:var(--restart)}
+.chip.static{background:var(--surface-2);color:var(--ink-mid)}
+.entry{border:1px solid var(--rule);border-radius:9px;margin-bottom:20px;overflow:hidden;
+  background:var(--ground)}
+.entry>header{display:flex;flex-wrap:wrap;align-items:center;gap:11px;
+  padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--rule)}
+.entry>header .name{font-family:var(--mono);font-size:13.5px;font-weight:500}
+.entry>header .what{color:var(--ink-soft);font-size:13px;margin-left:auto}
+.entry .body{padding:16px 16px 2px}
+.note{border-left:3px solid var(--accent);background:var(--accent-soft);
+  padding:12px 15px;border-radius:0 6px 6px 0;margin:0 0 18px}
+.note.warn{border-left-color:var(--restart);background:var(--restart-soft)}
+.note.danger{border-left-color:var(--danger);background:var(--danger-soft)}
+.note p:last-child{margin-bottom:0}
+.note strong{font-weight:600}
+.flow{font-family:var(--mono);font-size:12.6px;background:var(--surface);
+  border:1px solid var(--rule);border-radius:7px;padding:15px 17px;margin:0 0 18px;
+  overflow-x:auto;line-height:1.85;color:var(--ink-mid)}
+.flow b{color:var(--ink);font-weight:500}
+footer{border-top:1px solid var(--rule);padding-top:20px;color:var(--ink-soft);font-size:13px}
+@media (max-width:900px){
+  .wrap{grid-template-columns:1fr;gap:0;padding:0 22px}
+  nav.toc{position:static;max-height:none;border-right:none;
+    border-bottom:1px solid var(--rule);padding-bottom:20px}
+  nav.toc ol{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  main{padding-top:30px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+<nav class="toc">
+  <p class="brand">DSH 容器部署手册</p>
+  <p class="sub">配置、插件与排错</p>
+  <ol>
+    <li><a href="#s1"><span class="n">1</span><span>五分钟起一套栈</span></a></li>
+    <li><a href="#s2"><span class="n">2</span><span>配置放在哪</span></a></li>
+    <li><a href="#s3"><span class="n">3</span><span>环境变量</span></a></li>
+    <li><a href="#s4"><span class="n">4</span><span>五个 Nacos 条目</span></a></li>
+    <li><a href="#s5"><span class="n">5</span><span>多应用共用基础设施</span></a></li>
+    <li><a href="#s6"><span class="n">6</span><span>插件：从写到上架</span></a></li>
+    <li><a href="#s7"><span class="n">7</span><span>排错</span></a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <h1>DSH 容器部署手册</h1>
+  <p>一份基础镜像服务多个应用。本手册讲具体怎么配：起栈、五个 Nacos 条目怎么写、多应用怎么隔离、插件怎么上架、出错怎么查。全文的组织依据只有一条 —— <strong>改一个值要付出什么代价</strong>：改完就生效、改完要重启、还是要重建镜像。</p>
+</header>
+
+<section id="s1">
+  <h2><span class="n">1</span>五分钟起一套栈</h2>
+  <p class="lede">本地起一套完整环境：harness 本体、Nacos、PostgreSQL。</p>
+  <pre><code>docker compose -f deploy/docker-compose.yml up -d --build</code></pre>
+  <div class="scroll"><table>
+    <thead><tr><th>服务</th><th>地址</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td>dsh</td><td><code>http://localhost:3080</code></td><td>harness 本体</td></tr>
+      <tr><td>Nacos 控制台</td><td><code>http://localhost:8080</code></td><td>改实时配置</td></tr>
+      <tr><td>PostgreSQL</td><td><code>localhost:5432</code></td><td>会话与存储</td></tr>
+    </tbody>
+  </table></div>
+  <p>此时还不能对话 —— 没有 API key。最小可用配置只需一件事：在 Nacos 控制台新建配置，Data ID <code>dsh-credentials.yaml</code>，Group <code>DEFAULT_GROUP</code>，类型选 <code>yaml</code>：</p>
+  <pre><code>refs:
+  DEEPSEEK_API_KEY: sk-你的真实key
+records: {}</code></pre>
+  <p>发布后 10 秒内生效，无需重启。打开 <code>http://localhost:3080</code> 即可使用。</p>
+  <div class="note"><p>也可以用容器环境变量 <code>DEEPSEEK_API_KEY</code> 注入。<strong>环境变量优先且只读</strong> —— 设了它，Nacos 里的同名 ref 会被遮蔽，而且从界面写入会被<em>显式拒绝</em>，不会出现「提示保存成功但解析仍返回旧值」。</p></div>
+</section>
+
+<section id="s2">
+  <h2><span class="n">2</span>配置放在哪</h2>
+  <p class="lede">只有一个判断标准：<strong>这个值在连上 Nacos 之前需不需要先读到？</strong></p>
+  <p>需要 → 只能是静态的。否则会形成循环依赖：要读配置得先连 Nacos，而 Nacos 的地址本身就在配置里。</p>
+  <div class="scroll"><table>
+    <thead><tr><th>类别</th><th>包含</th><th>改法</th><th>生效</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="chip static">静态</span></td>
+        <td>监听地址端口、Nacos 与数据库坐标、能力接缝挂哪个实现</td>
+        <td>改 <code>packages/bundle/docker/cordis.patch.yml</code> → 重建镜像</td>
+        <td>下次部署</td>
+      </tr>
+      <tr>
+        <td><span class="chip live">实时</span></td>
+        <td>模型路由、API key、agent 参数、权限、全局提示词、插件的挂载与配置</td>
+        <td>Nacos 控制台改内容</td>
+        <td>秒级</td>
+      </tr>
+      <tr>
+        <td><span class="chip restart">需重启</span></td>
+        <td>应用名、插件清单</td>
+        <td>Nacos 控制台改内容</td>
+        <td>重启容器</td>
+      </tr>
+    </tbody>
+  </table></div>
+  <p>第三类是本手册里最容易踩的一类。它们同样写在 Nacos，但改完必须重启 —— 原因见 <a href="#s6">第 6 节</a>，不是条目的限制，是模块解析时机决定的。</p>
+</section>
+
+<section id="s3">
+  <h2><span class="n">3</span>环境变量</h2>
+  <p class="lede">写在 <code>docker-compose.yml</code> 的 <code>dsh.environment</code> 下，或 K8s Deployment 的 <code>env</code>。这里只放「连上 Nacos 之前必须知道」的东西。</p>
+
+  <h3>Nacos 与数据库坐标</h3>
+  <div class="scroll"><table>
+    <thead><tr><th>变量</th><th>默认</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>DSH_NACOS_HOST</code> / <code>_PORT</code></td><td><code>nacos</code> / <code>8848</code></td><td>地址；gRPC 端口由 HTTP 端口 +1000 推导。单节点 standalone 即可，不需要集群</td></tr>
+      <tr><td><code>DSH_NACOS_NAMESPACE</code></td><td>空（public）</td><td>命名空间 id。<strong>各应用用自己的命名空间隔离</strong></td></tr>
+      <tr><td><code>DSH_NACOS_GROUP</code></td><td><code>DEFAULT_GROUP</code></td><td>配置分组</td></tr>
+      <tr><td><code>DSH_NACOS_USERNAME</code> / <code>_PASSWORD</code></td><td>未设</td><td>Nacos 开鉴权时使用</td></tr>
+      <tr><td><code>DSH_POSTGRES_URL</code></td><td>未设</td><td>完整连接串；设了就忽略下面的分散字段</td></tr>
+      <tr><td><code>DSH_POSTGRES_HOST</code> / <code>_PORT</code></td><td><code>postgres</code> / <code>5432</code></td><td>数据库地址</td></tr>
+      <tr><td><code>DSH_POSTGRES_DB</code> / <code>_USER</code> / <code>_PASSWORD</code></td><td><code>dsh</code> / <code>dsh</code> / 未设</td><td>库名与凭据</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>可选覆盖</h3>
+  <div class="scroll"><table>
+    <thead><tr><th>变量</th><th>默认</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>DSH_PORT</code></td><td><code>3080</code></td><td>容器内监听端口</td></tr>
+      <tr><td><code>DSH_APP_NAME</code></td><td><code>dsh</code></td><td>应用名的<em>兜底</em>值；settings 条目里的 <code>deployment.appName</code> 优先</td></tr>
+      <tr><td><code>DSH_POSTGRES_SCHEMA</code></td><td>由应用名推导</td><td>精确指定 schema，覆盖推导结果</td></tr>
+      <tr><td><code>DSH_PLUGINS</code></td><td>空</td><td>插件规格，与 Nacos 清单取并集。纯 Nacos 管理时留空</td></tr>
+      <tr><td><code>DSH_NPM_REGISTRY</code> / <code>DSH_NPM_TOKEN</code></td><td>未设</td><td>清单条目没写 <code>registry</code> / <code>token</code> 时的兜底</td></tr>
+      <tr><td><code>DSH_NACOS_SETTINGS_DATA_ID</code></td><td><code>dsh-settings.yaml</code></td><td rowspan="2">条目名覆盖，一般不用改</td></tr>
+      <tr><td><code>DSH_NACOS_CREDENTIALS_DATA_ID</code></td><td><code>dsh-credentials.yaml</code></td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><p><strong>部署侧只需要知道去哪里连。</strong>「我是谁」写在应用自己的 Nacos 配置里（<code>deployment.appName</code>），不必在每份部署描述里重复。</p></div>
+</section>
+
+<section id="s4">
+  <h2><span class="n">4</span>五个 Nacos 条目</h2>
+  <p class="lede">五个条目在每个部署里<strong>名字完全相同</strong> —— 每个应用拥有自己的 Nacos 命名空间，隔离由命名空间完成，不靠给条目起不同的名字。这样基于同一镜像的应用不需要做任何命名决策。</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Data ID</th><th>类型</th><th>管什么</th><th>生效</th></tr></thead>
+    <tbody>
+      <tr><td><code>dsh-settings.yaml</code></td><td><code>yaml</code></td><td>应用身份 + 用户设置</td><td><span class="chip live">秒级</span></td></tr>
+      <tr><td><code>dsh-credentials.yaml</code></td><td><code>yaml</code></td><td>API key 与授权记录</td><td><span class="chip live">秒级</span></td></tr>
+      <tr><td><code>dsh-plugins.yml</code></td><td><code>yaml</code></td><td>插件挂载 / 禁用 / 改配置</td><td><span class="chip live">秒级</span></td></tr>
+      <tr><td><code>dsh-plugin-roster.yml</code></td><td><code>yaml</code></td><td>装哪些插件、从哪个仓库装</td><td><span class="chip restart">需重启</span></td></tr>
+      <tr><td><code>dsh-agents.md</code></td><td><code>text</code></td><td>全局提示词</td><td><span class="chip live">新会话</span></td></tr>
+    </tbody>
+  </table></div>
+  <div class="note warn"><p>新建配置时<strong>记得选对类型</strong>：YAML 条目选 <code>yaml</code>，控制台才有语法高亮和校验。通过 API 发布时不传 <code>type</code> 会默认成 <code>text</code>。功能上不影响解析，但控制台体验会变差。</p></div>
+
+  <div class="entry">
+    <header><span class="name">dsh-settings.yaml</span><span class="chip live">秒级生效</span><span class="what">应用身份 + 用户设置</span></header>
+    <div class="body">
+      <p>键是命名空间名，值是该命名空间的用户覆盖层。<strong>只写要覆盖的</strong>，没写的落回 schema 默认值。</p>
+      <p>顶部的 <code>deployment</code> 不是设置命名空间，是这个部署的身份声明 —— entrypoint 在 harness 启动前读它，决定本应用的 PostgreSQL schema。</p>
+      <pre><code># 应用身份。改了要重启容器：表打开后无法搬家。
+deployment:
+  appName: order-svc
+
+# 新会话默认用哪个模型
+agent-default-model:
+  provider: deepseek-official
+  model: deepseek-v4-flash
+  reasoningEffort: high
+
+# DeepSeek 官方适配器：这个应用允许用的模型清单
+llm-deepseek:
+  models:
+    - id: deepseek-v4-flash
+      name: DeepSeek-V4-Flash
+      description: 快速、经济，适合聚焦、常规或并行任务。
+      contextWindow: 1000000
+      inputModalities:
+        - text
+
+# agent 主循环：单步内最多并发多少个工具调用。1 = 串行。
+agent-loop:
+  maxParallelToolCalls: 4
+
+# 子 agent 模型选择。false = 跟随主 agent 的模型。
+subagent-model-selection:
+  enabled: false
+  allowedModels: []</code></pre>
+      <h4>接入第三方模型供应商</h4>
+      <p>用 <code>llm-pi-ai</code>，填了 provider 才会注册路由：</p>
+      <pre><code>llm-pi-ai:
+  providers:
+    my-vendor:
+      displayName: 内部网关
+      apiKeyEnv: MY_VENDOR_API_KEY    # 对应 credentials 条目 refs 里的键名
+      api: anthropic-messages          # 取值：anthropic-messages | openai-responses
+      baseURL: https://llm.internal.example.com
+      models:
+        - id: internal-large
+          name: 内部大模型</code></pre>
+      <div class="note"><p>实例注册的命名空间不止这些（还有 <code>permission</code>、<code>shell</code>、<code>locale</code>、<code>ui-theme</code>、<code>web-search-deepseek</code> 等）。<strong>各命名空间接受哪些字段以界面的设置页为准</strong> —— 在设置页改一次，再回 Nacos 看条目变成什么样，是确认字段名最可靠的方式。乱填的键会被 schema 拒绝。</p></div>
+      <div class="note"><p>界面写入是<strong>按命名空间读改写</strong>（<code>{ ...current, [ns]: section }</code>），所以 <code>deployment</code> 这个非命名空间的键不会被冲掉。</p></div>
+    </div>
+  </div>
+
+  <div class="entry">
+    <header><span class="name">dsh-credentials.yaml</span><span class="chip live">秒级生效</span><span class="what">API key 与授权记录</span></header>
+    <div class="body">
+      <pre><code># refs — 按环境变量名索引的密钥，供 LLM 适配器按名解析
+refs:
+  DEEPSEEK_API_KEY: sk-你的真实key
+  MY_VENDOR_API_KEY: sk-第三方供应商的key
+
+# records — 授权凭据记录，没有上层可遮蔽，存在即事实
+records: {}</code></pre>
+      <p>三条规则：</p>
+      <ul>
+        <li><strong>容器环境变量优先且只读。</strong>设了 <code>DEEPSEEK_API_KEY</code> 环境变量，这里的同名 ref 被遮蔽。</li>
+        <li><strong>写入被遮蔽的引用会显式拒绝</strong>，不会静默忽略。</li>
+        <li><strong><code>records</code> 没有上层</strong>，存在即生效。</li>
+      </ul>
+      <div class="note danger"><p><strong>这个条目是明文，Nacos 不额外加密。</strong>请放在读权限受限的独立命名空间，并给 Nacos 开启鉴权。</p></div>
+    </div>
+  </div>
+
+  <div class="entry">
+    <header><span class="name">dsh-plugins.yml</span><span class="chip live">秒级生效</span><span class="what">插件补丁层</span></header>
+    <div class="body">
+      <p>会被写到 profile 的 <code>cordis.patch.yml</code>，Loader 监听该文件，所以<strong>改完无需重启</strong>。内容是 Loader 的 patch 数组，三种写法：</p>
+      <pre><code># 1) 改已装插件的配置
+#    注意：整块 config 会被替换，要写全这一行拥有的所有键
+- id: session-title
+  config:
+    fallbackMaxWords: 5
+    fallbackMaxBytes: 40
+    maxTitleBytes: 120
+
+# 2) 临时禁用一个插件
+- id: demo-plugin
+  disabled: true
+
+# 3) 挂载一个已安装、但自身没声明 dsh.bundle 的包
+- insert:
+    - id: my-plugin
+      name: my-plugin-package
+      config:
+        someOption: true</code></pre>
+      <p>不做任何覆盖时写空数组：<code>[]</code></p>
+      <div class="note danger"><p><strong>不要 <code>insert</code> 一个已经自带 <code>dsh.bundle</code> 的包</strong> —— 它会被挂载两次。持有具名资源的插件第二次会报 <code>already-open</code>，容器起不来。</p></div>
+    </div>
+  </div>
+
+  <div class="entry">
+    <header><span class="name">dsh-plugin-roster.yml</span><span class="chip restart">需重启</span><span class="what">插件清单</span></header>
+    <div class="body">
+      <pre><code># 私有仓库地址。不写则用 DSH_NPM_REGISTRY，再不写用 pnpm 默认源。
+registry: https://npm.internal.example.com/
+
+# 私有仓库 bearer token。仓库匿名可读时删掉这行。
+token: npm_xxxxxxxxxxxxxxxx
+
+packages:
+  - dsh-plugin-example@1.2.0
+  - '@acme/dsh-internal-tools'</code></pre>
+      <p>公共源、无鉴权时的最简形式：</p>
+      <pre><code>packages:
+  - dsh-plugin-example@1.2.0</code></pre>
+      <p><strong>清单是声明式的</strong>：删掉一行，下次启动会卸载那个包。只卸载由清单装过的（记录在 profile 的 <code>dsh.roster</code>），运维手工 <code>dsh plugin add</code> 的不动。</p>
+      <div class="note warn"><p>配了 <code>token</code> 却没配 <code>registry</code> 会<strong>直接报错拒绝启动</strong> —— 因为这意味着运维以为有鉴权而实际不会发生，私有包会以一个没有原因的 404 失败。</p></div>
+    </div>
+  </div>
+
+  <div class="entry">
+    <header><span class="name">dsh-agents.md</span><span class="chip live">新会话生效</span><span class="what">全局提示词</span></header>
+    <div class="body">
+      <p>纯 Markdown，被写到 <code>$DSH_HOME/AGENTS.md</code>，作为用户级全局指令注入<strong>每个会话</strong>的提示词。</p>
+      <pre><code># 订单服务助手
+
+你是订单服务的运维助手。回答遵循以下约定：
+
+## 语言与风格
+- 用中文回答，除非用户用英文提问。
+- 先给结论，再给依据。
+
+## 边界
+- 涉及退款、改价、取消订单的操作，只说明步骤，不直接执行。
+
+## 上下文
+- 订单表主键是 order_no，不是自增 id。
+- 时区一律按 Asia/Shanghai 处理。</code></pre>
+      <p>改动对<strong>新会话</strong>生效，已在进行的会话保持它加载时的指令。</p>
+      <div class="note warn"><p>这段文字进每个会话的<em>每次</em>请求。写长了每轮都在付 token。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="s5">
+  <h2><span class="n">5</span>多应用共用基础设施</h2>
+  <p class="lede">一份基础镜像，多个应用。<strong>Nacos 各自隔离，PostgreSQL 共用一个库。</strong></p>
+  <p>因为库是共用的，所以唯一必须按应用区分的就是 schema。应用在自己的 <code>dsh-settings.yaml</code> 里声明名字：</p>
+  <pre><code>deployment:
+  appName: order-svc</code></pre>
+  <p>部署描述里只写坐标，不写身份：</p>
+  <pre><code>services:
+  order-svc:
+    image: your-registry/dsh-base:0.1.2
+    environment:
+      DSH_NACOS_HOST: nacos.internal
+      DSH_NACOS_NAMESPACE: order-svc        # 这个应用自己的 Nacos 命名空间
+      DSH_POSTGRES_URL: postgres://dsh:pw@pg.internal/dsh
+    ports: ['3080:3080']
+
+  billing-svc:
+    image: your-registry/dsh-base:0.1.2     # 同一份镜像
+    environment:
+      DSH_NACOS_HOST: nacos.internal
+      DSH_NACOS_NAMESPACE: billing-svc      # 只有这里不同
+      DSH_POSTGRES_URL: postgres://dsh:pw@pg.internal/dsh
+    ports: ['3081:3080']</code></pre>
+  <h3>应用名如何变成 schema</h3>
+  <div class="scroll"><table>
+    <thead><tr><th><code>deployment.appName</code></th><th>PostgreSQL schema</th></tr></thead>
+    <tbody>
+      <tr><td>未声明</td><td><code>dsh</code></td></tr>
+      <tr><td><code>order-svc</code></td><td><code>order_svc</code></td></tr>
+      <tr><td><code>Order Service</code></td><td><code>order_service</code></td></tr>
+      <tr><td><code>2fa</code></td><td>拒绝启动</td></tr>
+    </tbody>
+  </table></div>
+  <p>名字会被折叠成合法的 SQL 标识符（小写、非字母数字折成下划线）。数字开头的名字<strong>被拒绝而不是修复</strong> —— 任何修复都可能把两个不同应用悄悄合并到同一个 schema。</p>
+  <div class="note danger"><p><strong>必须隔离，不能共用 schema。</strong><code>kv_record</code> 的主键是 <code>(unit, tbl, key)</code>，不带应用维度。两个应用在同一 schema 里写同一个 unit 会互相覆盖，而且不报任何错 —— 你只会看到数据莫名其妙地变。</p></div>
+  <h3>启动顺序</h3>
+  <div class="flow">读环境变量 → 连上应用自己的 Nacos 命名空间
+  ↓
+读 <b>dsh-settings.yaml</b> → 取 <b>deployment.appName</b> = order-svc
+  ↓
+写入 /run/dsh-resolved.env → entrypoint source 进环境
+  ↓
+读 <b>dsh-plugin-roster.yml</b> → 从 npm 仓库装插件
+  ↓
+harness 启动 → PG schema = <b>order_svc</b> → 建表 → 服务就绪</div>
+  <ul>
+    <li>数据库角色需要 <code>CREATE</code> 权限，首次启动时建 schema。</li>
+    <li><strong>改名不会迁移数据</strong>：容器会指向一个空 schema，旧的原样留在那里。</li>
+  </ul>
+</section>
+
+<section id="s6">
+  <h2><span class="n">6</span>插件：从写到上架</h2>
+  <p class="lede">三种来源，各有各的位置和适用场景。</p>
+  <div class="scroll"><table>
+    <thead><tr><th>来源</th><th>放在哪</th><th>适用</th></tr></thead>
+    <tbody>
+      <tr><td>仓库内置</td><td><code>/app/packages/&lt;组&gt;/&lt;包&gt;/</code>（镜像里）</td><td>首版默认插件集，随镜像发布</td></tr>
+      <tr><td>Nacos 清单</td><td><code>/var/lib/dsh/profiles/web/node_modules/</code></td><td>各应用的个性化插件</td></tr>
+      <tr><td><code>DSH_PLUGINS</code></td><td>同上</td><td>与清单等价，用环境变量固定时</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>写一个插件</h3>
+  <pre><code>// index.js
+import { z } from 'zod'
+
+export const name = 'dsh-demo-plugin'
+
+// 注入 storageDomain 而不是 storage：
+// 前者是域层挂好后才提供的服务，注入 storage 会在任何 form 挂上之前就激活。
+export const inject = ['storageDomain']
+
+const DOMAIN = {
+  name: 'demo_plugin',              // 必须匹配 ^[a-z][a-z0-9_]*$
+  version: 1,
+  tables: {
+    loads: { valueSchema: z.object({ at: z.string(), app: z.string() }) },
+  },
+}
+
+export async function apply(ctx) {
+  const domain = await ctx.storageDomain.open(DOMAIN)
+  ctx.effect(() =&gt; async () =&gt; { await domain.close() }, 'demo domain')
+
+  const at = new Date().toISOString()
+  await domain.table('loads').put(at, { at, app: process.env.DSH_APP_NAME ?? 'dsh' })
+}</code></pre>
+  <p><code>package.json</code> 里<strong>声明 <code>dsh.bundle</code> 就会自动挂载</strong>，不需要在 <code>dsh-plugins.yml</code> 里再写一行：</p>
+  <pre><code>{
+  "name": "dsh-demo-plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "cordis.patch.yml"],
+  "dependencies": { "zod": "^4.4.3" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}</code></pre>
+  <pre><code># cordis.patch.yml —— 这个包自己的挂载层
+- insert:
+    - id: demo-plugin
+      name: dsh-demo-plugin</code></pre>
+  <p><strong>没声明 <code>dsh.bundle</code></strong> 的包只会作为普通依赖装上，必须在 <code>dsh-plugins.yml</code> 里写 <code>insert</code> 才会挂载。</p>
+
+  <h3>发布并上架</h3>
+  <pre><code># 1. 发到私有仓库
+npm publish --registry https://npm.internal.example.com/
+
+# 2. 在 Nacos 的 dsh-plugin-roster.yml 加一行
+#    packages:
+#      - dsh-demo-plugin@0.1.0
+
+# 3. 重启容器
+docker restart &lt;容器名&gt;</code></pre>
+  <p>启动日志会显示：</p>
+  <pre><code>entrypoint: deployment.appName = order-svc (from the settings entry)
+entrypoint: dsh-plugin-roster.yml declares 1 plugin package(s)
+entrypoint: installing 1 plugin package(s) from https://npm.internal.example.com/
++ dsh-demo-plugin 0.1.0</code></pre>
+
+  <h3>为什么装插件必须重启</h3>
+  <p>Loader 在<strong>组合插件树时一次性解析</strong> profile 的模块。往运行中的进程里装一个包，Loader 看不见它 —— 无论用什么方式请求挂载都不行。所以安装动作放在 entrypoint、harness 启动之前。</p>
+  <p>Nacos 换来的是<strong>集中编辑</strong>（不用重新部署、不用改环境变量、每应用一个条目），不是免重启安装。</p>
+  <div class="scroll"><table>
+    <thead><tr><th>动作</th><th>是否需要重启</th></tr></thead>
+    <tbody>
+      <tr><td>装一个新包 / 卸载一个包</td><td><span class="chip restart">需要</span></td></tr>
+      <tr><td>挂载已装的包</td><td><span class="chip live">不需要</span></td></tr>
+      <tr><td>禁用 / 重新启用已挂载的插件</td><td><span class="chip live">不需要</span></td></tr>
+      <tr><td>改已挂载插件的 config</td><td><span class="chip live">不需要</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s7">
+  <h2><span class="n">7</span>排错</h2>
+
+  <h3>容器起不来</h3>
+  <pre><code>docker logs &lt;容器名&gt; 2&gt;&amp;1 | tail -40</code></pre>
+  <div class="scroll"><table>
+    <thead><tr><th>日志</th><th>原因</th><th>处理</th></tr></thead>
+    <tbody>
+      <tr><td><code>domain 'xxx' is already open</code></td><td>插件被挂载两次</td><td>从 <code>dsh-plugins.yml</code> 删掉 <code>insert</code>，包自带 <code>dsh.bundle</code> 就够了</td></tr>
+      <tr><td><code>ERR_PNPM_FETCH_401</code></td><td>私有仓库鉴权失败</td><td>检查清单条目的 <code>token</code> 是否为空</td></tr>
+      <tr><td><code>a plugin-registry token needs a registry</code></td><td>配了 token 没配 registry</td><td>补上 <code>registry</code></td></tr>
+      <tr><td><code>must match /^[a-z][a-z0-9_]*$/</code></td><td>应用名不合法</td><td>换成字母开头的名字</td></tr>
+      <tr><td><code>ERR_MODULE_NOT_FOUND</code></td><td>插件依赖没装上</td><td>确认依赖写在插件 <code>package.json</code> 的 <code>dependencies</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>构建失败但显示成功</h3>
+  <p><code>docker compose build</code> 有时<strong>构建失败却返回 exit 0</strong>。先判断镜像是否真的更新了：</p>
+  <pre><code>docker images dsh-dsh --format '{{.CreatedSince}}'</code></pre>
+  <p>显示的时间不是刚才，说明没更新。看真实原因：</p>
+  <pre><code>docker compose -f deploy/docker-compose.yml build --progress=plain dsh 2&gt;&amp;1 | grep -E 'ERROR|ERR_'</code></pre>
+  <p>最常见的是 <code>ERR_PNPM_OUTDATED_LOCKFILE</code> —— 改了任何 <code>package.json</code> 后要跑 <code>pnpm install</code> 并把 <code>pnpm-lock.yaml</code> 一起提交。</p>
+
+  <h3>Nacos 改了不生效</h3>
+  <p>先确认改对了命名空间 —— 各应用的配置在各自的命名空间里，条目名是相同的，很容易改错地方。</p>
+  <pre><code>docker exec &lt;nacos容器&gt; sh -c 'curl -s \
+  "http://127.0.0.1:8848/nacos/v3/admin/cs/config?dataId=dsh-settings.yaml&amp;groupName=DEFAULT_GROUP&amp;namespaceId=order-svc" \
+  -H "serverIdentity: security"'</code></pre>
+  <p>然后按类型判断：插件清单和应用名本来就需要重启；其余条目应在 10 秒内生效。</p>
+
+  <h3>确认数据落在哪个 schema</h3>
+  <pre><code>docker exec &lt;pg容器&gt; psql -U dsh -d dsh -c "\dn"
+docker exec &lt;pg容器&gt; psql -U dsh -d dsh -c \
+  "select unit, count(*) from order_svc.kv_record group by unit;"</code></pre>
+</section>
+
+<footer>
+  <p>对应仓库文档：<code>deploy/README.md</code>（运行栈与环境变量速查）、<code>deploy/CONFIG-TOPOLOGY.zh.md</code>（三层划分的设计依据）、<code>packages/nacos/README.md</code>（提供者与文件镜像的实现）。</p>
+</footer>
+</main>
+</div>
