@@ -79,6 +79,10 @@ None. This package registers nothing model-facing; it is a transport library.
 
 No direct invalidation; the consuming plugin owns any request-prefix changes.
 
+### One connection per client
+
+Every client forces its own HTTP/2 connection by passing a unique channel option. grpc-js pools subchannels by (target, credentials, options), Nacos identifies a client connection by its source address, and a harness process runs several Nacos-backed plugins at once — so clients built with identical options share a connection, share a registration, and the one the server displaces goes silently deaf: it keeps answering reads while never seeing another change.
+
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>

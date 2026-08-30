@@ -195,12 +195,34 @@ export class NacosConfigClient {
   async connect(): Promise<void> {
     const definition = fromJSON(NACOS_PROTO_DESCRIPTOR as never, { keepCase: true, defaults: true })
     const loaded = grpc.loadPackageDefinition(definition) as unknown as {
-      Request: new (address: string, credentials: grpc.ChannelCredentials) => UnaryClient
-      BiRequestStream: new (address: string, credentials: grpc.ChannelCredentials) => StreamClient
+      Request: new (
+        address: string,
+        credentials: grpc.ChannelCredentials,
+        options: grpc.ClientOptions,
+      ) => UnaryClient
+      BiRequestStream: new (
+        address: string,
+        credentials: grpc.ChannelCredentials,
+        options: grpc.ClientOptions,
+      ) => StreamClient
     }
     const credentials = grpc.credentials.createInsecure()
-    this.unary = new loaded.Request(this.address, credentials)
-    this.streamClient = new loaded.BiRequestStream(this.address, credentials)
+    // Force this client onto its own HTTP/2 connection. grpc-js pools
+    // subchannels by (target, credentials, options), so two clients built with
+    // identical options share one connection and therefore one source port —
+    // and Nacos identifies a client connection by that source address. The
+    // second `ConnectionSetupRequest` then displaces the first's registration
+    // and the server delivers every push to one stream, whose client discards
+    // the keys it does not watch. The failure is silent and partial: the
+    // displaced client keeps serving reads while never seeing another change.
+    //
+    // A harness process runs several Nacos-backed plugins (settings,
+    // credentials, and any mirrored entries), so this is the normal case, not
+    // an edge one. A unique option per client is what keeps the pool from
+    // merging them.
+    const channelOptions = { 'grpc.primary_user_agent': `dsh-nacos-client/${randomUUID()}` }
+    this.unary = new loaded.Request(this.address, credentials, channelOptions)
+    this.streamClient = new loaded.BiRequestStream(this.address, credentials, channelOptions)
     // The server check both proves reachability and tells the server a client
     // is about to set up; skipping it leaves the stream unassociated.
     const check = await this.call('ServerCheckRequest', {})
