@@ -29,6 +29,10 @@ export interface PostgresQueryable {
   query(sql: string): Promise<unknown>
 }
 
+/** The character `jsonb` refuses, and the one that records its absence. */
+const NUL = '\u0000'
+const REPLACEMENT = '\ufffd'
+
 /** Allowed schema spelling: safe as a SQL identifier without escaping. */
 export const SCHEMA_NAME_RE = /^[a-z][a-z0-9_]*$/
 
@@ -105,6 +109,42 @@ export function resolvePostgresSchema(config: PostgresConnectionConfig): string 
   if (config.schema !== undefined) return assertSchemaName(config.schema)
   if (config.app !== undefined) return appSchemaName(config.app)
   return DEFAULTS.schema
+}
+
+/**
+ * Serialize one value as the JSON text a `jsonb` column accepts.
+ *
+ * PostgreSQL refuses `\u0000` inside a `jsonb` string — the whole statement
+ * fails with `unsupported Unicode escape sequence` (SQLSTATE 22P05). A NUL
+ * reaches a harness document from one place: subprocess output, which is
+ * decoded with `Buffer.toString('utf8')` and so carries a raw NUL byte through
+ * as U+0000, unlike the filesystem reader, which rejects binary outright.
+ * Without this, one `printf` of a NUL byte fails the insert and takes the whole
+ * turn down.
+ *
+ * The character is replaced rather than removed, and rather than being handled
+ * by widening the column to `text`: U+FFFD records that something
+ * unrepresentable was there, `jsonb` keeps the rows queryable with `->` and
+ * `->>` for an operator reading the database directly, and a `text` column
+ * would not have helped the rows that motivate this — a document holding a NUL
+ * is exactly the one a `::jsonb` cast then refuses.
+ *
+ * The substitution runs over string VALUES, through the serializer's replacer,
+ * rather than over the JSON text it produces. Rewriting the text would also
+ * rewrite a document that legitimately contains the six literal characters of
+ * a `\u0000` escape — a pasted JSON fragment, or a note about this very
+ * failure — and corrupt it silently.
+ *
+ * Nothing else is altered: this is not a general sanitizer, and every other
+ * character a document carries reaches the database unchanged. An object KEY
+ * holding a NUL is not covered; subprocess output reaches a document as a
+ * value, and a key would have to be constructed deliberately.
+ * @param value - the document to store.
+ * @returns JSON text safe to cast to `jsonb`.
+ */
+export function toJsonbText(value: unknown): string {
+  return JSON.stringify(value, (_key, entry: unknown) =>
+    typeof entry === 'string' ? entry.replaceAll(NUL, REPLACEMENT) : entry)
 }
 
 /**

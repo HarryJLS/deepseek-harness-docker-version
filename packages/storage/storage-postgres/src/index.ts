@@ -22,6 +22,7 @@ import {
   postgresConnectionSchema,
   resolvePostgresPool,
   resolvePostgresSchema,
+  toJsonbText,
 } from '@deepseek-ai/dsh-postgres-schema'
 import type { PostgresConnectionConfig } from '@deepseek-ai/dsh-postgres-schema'
 import { StorageError, UNIT_NAME_RE, storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
@@ -102,7 +103,7 @@ class PostgresKvUnit implements KvUnit {
       `INSERT INTO "${this.schema}"."${RECORD_TABLE}" (unit, tbl, key, value)
        VALUES ($1, $2, $3, $4::jsonb)
        ON CONFLICT (unit, tbl, key) DO UPDATE SET value = EXCLUDED.value`,
-      [this.descriptor.name, table, key, JSON.stringify(value ?? null)],
+      [this.descriptor.name, table, key, toJsonbText(value ?? null)],
     )
   }
 
@@ -127,7 +128,7 @@ class PostgresKvUnit implements KvUnit {
       `INSERT INTO "${this.schema}"."${GLOBAL_TABLE}" (unit, value)
        VALUES ($1, $2::jsonb)
        ON CONFLICT (unit) DO UPDATE SET value = EXCLUDED.value`,
-      [this.descriptor.name, JSON.stringify(value ?? null)],
+      [this.descriptor.name, toJsonbText(value ?? null)],
     )
   }
 

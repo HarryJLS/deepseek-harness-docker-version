@@ -18,7 +18,7 @@
  */
 
 import pg from 'pg'
-import { ensureSchema } from '@deepseek-ai/dsh-postgres-schema'
+import { ensureSchema, toJsonbText } from '@deepseek-ai/dsh-postgres-schema'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import {
   SessionPersistenceRevision,
@@ -163,7 +163,7 @@ export class PostgresSessionStore implements PersistenceBackend<never> {
       `INSERT INTO "${this.schema}"."${SESSION_TABLE}" (id, meta, revision)
        VALUES ($1, $2::jsonb, 1)
        ON CONFLICT (id) DO NOTHING`,
-      [meta.id, JSON.stringify(meta)],
+      [meta.id, toJsonbText(meta)],
     )
   }
 
@@ -185,7 +185,7 @@ export class PostgresSessionStore implements PersistenceBackend<never> {
           `INSERT INTO "${this.schema}"."${SESSION_TABLE}" (id, meta, revision)
            VALUES ($1, $2::jsonb, 0)
            ON CONFLICT (id) DO NOTHING`,
-          [meta.id, JSON.stringify(meta)],
+          [meta.id, toJsonbText(meta)],
         )
       }
       await this.insertEvents(client, meta.id, events)
@@ -269,7 +269,7 @@ export class PostgresSessionStore implements PersistenceBackend<never> {
     // already contiguous and the whole transaction commits together anyway.
     const values: unknown[] = [id]
     const tuples = events.map((event, index) => {
-      values.push(event.seq, JSON.stringify(event))
+      values.push(event.seq, toJsonbText(event))
       return `($1, $${String(index * 2 + 2)}, $${String(index * 2 + 3)}::jsonb)`
     })
     await client.query(

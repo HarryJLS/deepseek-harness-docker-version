@@ -7,7 +7,13 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { appSchemaName, assertSchemaName, ensureSchema, resolvePostgresSchema } from '../src/index.ts'
+import {
+  appSchemaName,
+  assertSchemaName,
+  ensureSchema,
+  resolvePostgresSchema,
+  toJsonbText,
+} from '../src/index.ts'
 
 /** One error carrying a PostgreSQL SQLSTATE, as the driver reports it. */
 function pgError(code: string): Error & { code: string } {
@@ -93,5 +99,42 @@ describe('ensureSchema', () => {
   it('propagates a failure carrying no code', async () => {
     const query = vi.fn().mockRejectedValue(new Error('connection terminated'))
     await expect(ensureSchema({ query }, 'dsh')).rejects.toThrow(/connection terminated/u)
+  })
+})
+
+describe('toJsonbText', () => {
+  /** One NUL, built without writing a control character into this file. */
+  const NUL = String.fromCharCode(0)
+
+  it('replaces the one character jsonb refuses', () => {
+    // PostgreSQL rejects a NUL inside a jsonb string with SQLSTATE 22P05, so a
+    // single NUL in subprocess output would otherwise fail the whole insert and
+    // take the turn down with it.
+    const encoded = toJsonbText({ out: `a${NUL}b` })
+    expect(encoded).not.toContain(String.raw`\u0000`)
+    expect(JSON.parse(encoded)).toEqual({ out: 'a\ufffdb' })
+  })
+
+  it('replaces every occurrence, not just the first', () => {
+    expect(JSON.parse(toJsonbText({ s: `${NUL}a${NUL}b${NUL}` })))
+      .toEqual({ s: '\ufffda\ufffdb\ufffd' })
+  })
+
+  it('leaves every other document identical to JSON.stringify', () => {
+    // Not a general sanitizer: tabs, newlines, escapes, non-ASCII text, and the
+    // six literal characters of an escape a document may legitimately contain
+    // all reach the database unchanged.
+    for (const value of [
+      { plain: 'hello' },
+      { nested: { deep: [1, 2, { s: 'ok' }] } },
+      { control: '\t\n\r' },
+      { unicode: 'zhongwen and emoji' },
+      { literal: String.raw`not a real \\u0000 escape` },
+      null,
+      [],
+      'bare string',
+    ]) {
+      expect(toJsonbText(value)).toBe(JSON.stringify(value))
+    }
   })
 })
