@@ -31,6 +31,11 @@ readable *before* a remote configuration source can be contacted?
 
 ## Durable state
 
+[`schema.sql`](schema.sql) holds the DDL for every table below, for a deployment whose
+database role owns no DDL rights. The plugins check `information_schema` first and
+skip their creates when every table is already there, so a DBA-provisioned schema
+needs no privilege grant beyond SELECT/INSERT/UPDATE/DELETE.
+
 | State | Backend | Table |
 |---|---|---|
 | Session event logs | PostgreSQL | `dsh.session`, `dsh.session_event` |

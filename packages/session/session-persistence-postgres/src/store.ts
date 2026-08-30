@@ -18,7 +18,7 @@
  */
 
 import pg from 'pg'
-import { ensureSchema, toJsonbText } from '@deepseek-ai/dsh-postgres-schema'
+import { ensureSchema, tablesPresent, toJsonbText } from '@deepseek-ai/dsh-postgres-schema'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import {
   SessionPersistenceRevision,
@@ -68,8 +68,17 @@ export class PostgresSessionStore implements PersistenceBackend<never> {
     this.source = `postgres:${database}:${schema}`
   }
 
-  /** Create the two tables this store owns. */
+  /**
+   * Create the two tables this store owns, unless a DBA already did.
+   *
+   * A production role often holds no DDL rights, and `IF NOT EXISTS` does not
+   * exempt a statement from the privilege check, so issuing the creates
+   * unconditionally makes such a database unusable. Both tables present means
+   * there is nothing to create; anything missing still runs the creates, so a
+   * half-provisioned database fails at start rather than at first write.
+   */
   async migrate(): Promise<void> {
+    if (await tablesPresent(this.pool, this.schema, [SESSION_TABLE, EVENT_TABLE])) return
     await ensureSchema(this.pool, this.schema)
     await this.pool.query(
       `CREATE TABLE IF NOT EXISTS "${this.schema}"."${SESSION_TABLE}" (

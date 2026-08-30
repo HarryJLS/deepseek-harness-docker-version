@@ -22,6 +22,7 @@ import {
   postgresConnectionSchema,
   resolvePostgresPool,
   resolvePostgresSchema,
+  tablesPresent,
   toJsonbText,
 } from '@deepseek-ai/dsh-postgres-schema'
 import type { PostgresConnectionConfig } from '@deepseek-ai/dsh-postgres-schema'
@@ -209,6 +210,10 @@ class PostgresBackend implements StorageBackend {
  * @param schema - the validated schema name.
  */
 async function migrate(pool: pg.Pool, schema: string): Promise<void> {
+  // A production role often holds no DDL rights, and `IF NOT EXISTS` does not
+  // exempt a statement from the privilege check. Every table present means
+  // there is nothing to create.
+  if (await tablesPresent(pool, schema, [UNIT_TABLE, RECORD_TABLE, GLOBAL_TABLE])) return
   await ensureSchema(pool, schema)
   await pool.query(
     `CREATE TABLE IF NOT EXISTS "${schema}"."${UNIT_TABLE}" (

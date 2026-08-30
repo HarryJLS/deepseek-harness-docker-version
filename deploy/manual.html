@@ -127,8 +127,9 @@ footer{border-top:1px solid var(--rule);padding-top:20px;color:var(--ink-soft);f
     <li><a href="#s3"><span class="n">3</span><span>环境变量</span></a></li>
     <li><a href="#s4"><span class="n">4</span><span>五个 Nacos 条目</span></a></li>
     <li><a href="#s5"><span class="n">5</span><span>多应用共用基础设施</span></a></li>
-    <li><a href="#s6"><span class="n">6</span><span>插件：从写到上架</span></a></li>
-    <li><a href="#s7"><span class="n">7</span><span>排错</span></a></li>
+    <li><a href="#s6"><span class="n">6</span><span>数据库预建表</span></a></li>
+    <li><a href="#s7"><span class="n">7</span><span>插件：从写到上架</span></a></li>
+    <li><a href="#s8"><span class="n">8</span><span>排错</span></a></li>
   </ol>
 </nav>
 
@@ -185,7 +186,7 @@ records: {}</code></pre>
       </tr>
     </tbody>
   </table></div>
-  <p>第三类是本手册里最容易踩的一类。它们同样写在 Nacos，但改完必须重启 —— 原因见 <a href="#s6">第 6 节</a>，不是条目的限制，是模块解析时机决定的。</p>
+  <p>第三类是本手册里最容易踩的一类。它们同样写在 Nacos，但改完必须重启 —— 原因见 <a href="#s7">第 7 节</a>，不是条目的限制，是模块解析时机决定的。</p>
 </section>
 
 <section id="s3">
@@ -429,8 +430,100 @@ harness 启动 → PG schema = <b>order_svc</b> → 建表 → 服务就绪</div
   </ul>
 </section>
 
+
 <section id="s6">
-  <h2><span class="n">6</span>插件：从写到上架</h2>
+  <h2><span class="n">6</span>数据库预建表</h2>
+  <p class="lede">生产环境通常不给应用 DDL 权限 —— 表由 DBA 建好，应用角色只有增删改查。本节是完整建表脚本。</p>
+  <div class="note warn"><p><strong><code>IF NOT EXISTS</code> 不豁免权限检查。</strong>无 DDL 权限的角色执行 <code>CREATE TABLE IF NOT EXISTS</code>，即使表已存在也会报 <code>permission denied for schema</code>。所以应用在启动时会<strong>先查 <code>information_schema</code></strong>：六张表齐全就完全跳过 DDL，缺任何一张才尝试创建。</p></div>
+  <div class="scroll"><table>
+    <thead><tr><th>情况</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>表已建好，角色无 DDL 权限</td><td><span class="chip live">正常启动</span> 跳过全部 DDL</td></tr>
+      <tr><td>表未建，角色有 DDL 权限</td><td><span class="chip live">正常启动</span> 自动建表</td></tr>
+      <tr><td>表未建，角色无 DDL 权限</td><td><span class="chip restart">拒绝启动</span> 明确报 permission denied</td></tr>
+    </tbody>
+  </table></div>
+  <p>最后一种是刻意的：带着不存在的表提供服务，会在第一次写入时才炸，那时已经有用户在用了。</p>
+  <h3>建表脚本</h3>
+  <p>仓库里同样的内容在 <code>deploy/schema.sql</code>。把 <code>&lt;schema&gt;</code> 换成该应用的 schema 名，<code>&lt;app_role&gt;</code> 换成应用连接用的角色。</p>
+  <pre><code>-- 生成自各 PostgreSQL 插件的建表语句，与代码保持一致。
+-- DeepSeek Harness —— 应用所需的全部对象
+-- 把 &lt;schema&gt; 换成该应用的 schema 名（由 deployment.appName 折叠而来：
+-- order-svc -&gt; order_svc）。每个应用一个 schema，不可共用。
+
+CREATE SCHEMA IF NOT EXISTS &lt;schema&gt;;
+
+-- ── 会话 ──────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS &lt;schema&gt;.session (
+  id         text        PRIMARY KEY,
+  meta       jsonb       NOT NULL,
+  revision   bigint      NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS &lt;schema&gt;.session_event (
+  session_id text    NOT NULL
+    REFERENCES &lt;schema&gt;.session (id) ON DELETE CASCADE,
+  seq        integer NOT NULL,
+  event      jsonb   NOT NULL,
+  PRIMARY KEY (session_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS session_created_at_idx
+  ON &lt;schema&gt;.session (created_at);
+
+-- ── 存储 ──────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS &lt;schema&gt;.kv_unit (
+  unit    text    PRIMARY KEY,
+  version integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS &lt;schema&gt;.kv_record (
+  unit  text  NOT NULL,
+  tbl   text  NOT NULL,
+  key   text  NOT NULL,
+  value jsonb NOT NULL,
+  PRIMARY KEY (unit, tbl, key)
+);
+
+CREATE TABLE IF NOT EXISTS &lt;schema&gt;.kv_global (
+  unit  text  PRIMARY KEY,
+  value jsonb NOT NULL
+);
+
+-- ── 附件 ──────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS &lt;schema&gt;.attachment_object (
+  sha256     text        PRIMARY KEY,
+  media_type text        NOT NULL,
+  bytes      integer     NOT NULL,
+  width      integer     NOT NULL,
+  height     integer     NOT NULL,
+  data       bytea       NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── 应用角色：只给 DML，不给 DDL ──────────────────────────────────────────
+GRANT USAGE ON SCHEMA &lt;schema&gt; TO &lt;app_role&gt;;
+GRANT SELECT, INSERT, UPDATE, DELETE
+  ON ALL TABLES IN SCHEMA &lt;schema&gt; TO &lt;app_role&gt;;
+</code></pre>
+  <h3>六张表存什么</h3>
+  <div class="scroll"><table>
+    <thead><tr><th>表</th><th>存什么</th></tr></thead>
+    <tbody>
+      <tr><td><code>session</code></td><td>会话头。<code>revision</code> 每次写入递增，用于判断某副本持有的视图是否过期</td></tr>
+      <tr><td><code>session_event</code></td><td>会话事件日志，一行一事件，按 <code>seq</code> 有序。可按 seq 寻址，投影从水位线恢复时只读后缀</td></tr>
+      <tr><td><code>kv_unit</code></td><td>各存储单元的格式版本戳。版本不匹配会拒绝打开而非静默迁移</td></tr>
+      <tr><td><code>kv_record</code></td><td>存储记录。当前使用者：会话投影缓存、工作区、消息反馈</td></tr>
+      <tr><td><code>kv_global</code></td><td>各单元的全局单例槽</td></tr>
+      <tr><td><code>attachment_object</code></td><td>归一化后的图片二进制，按内容寻址。去重靠主键冲突，无需额外逻辑</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><p><strong>模型请求用的派生图片变体不落库</strong>，留在容器本地临时目录。每个变体都是「引用 + 路由策略」的确定性函数，被替换的容器会重新生成完全相同的字节。判断原则：只有无法重算的东西才需要持久化。</p></div>
+</section>
+
+<section id="s7">
+  <h2><span class="n">7</span>插件：从写到上架</h2>
   <p class="lede">三种来源，各有各的位置和适用场景。</p>
   <div class="scroll"><table>
     <thead><tr><th>来源</th><th>放在哪</th><th>适用</th></tr></thead>
@@ -512,8 +605,8 @@ entrypoint: installing 1 plugin package(s) from https://npm.internal.example.com
   </table></div>
 </section>
 
-<section id="s7">
-  <h2><span class="n">7</span>排错</h2>
+<section id="s8">
+  <h2><span class="n">8</span>排错</h2>
 
   <h3>容器起不来</h3>
   <pre><code>docker logs &lt;容器名&gt; 2&gt;&amp;1 | tail -40</code></pre>

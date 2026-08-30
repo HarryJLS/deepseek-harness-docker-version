@@ -14,8 +14,9 @@ kind: "deployment-guide"
 - [3. 环境变量全表](#env)
 - [4. 五个 Nacos 条目（完整范例）](#entries)
 - [5. 多应用共用一套基础设施](#multi-app)
-- [6. 插件：从写到上架](#plugins)
-- [7. 排错](#troubleshooting)
+- [6. 数据库预建表](#schema)
+- [7. 插件：从写到上架](#plugins)
+- [8. 排错](#troubleshooting)
 
 -----
 
@@ -68,7 +69,7 @@ records: {}
 静态的改法：改 `packages/bundle/docker/cordis.patch.yml` → 重建镜像 → 重新部署。
 实时的改法：Nacos 控制台改内容。
 
-**一个例外**：插件清单在 Nacos，但**改完要重启容器**。原因见 [6.4](#plugin-restart)。
+**一个例外**：插件清单在 Nacos，但**改完要重启容器**。原因见 [7.4](#plugin-restart)。
 
 -----
 
@@ -347,8 +348,105 @@ services:
 
 -----
 
+<a id="schema"></a>
+## 6. 数据库预建表
+
+生产环境通常不给应用 DDL 权限 —— 表由 DBA 建好，应用角色只有增删改查。
+
+**`IF NOT EXISTS` 不豁免权限检查。** 无 DDL 权限的角色执行 `CREATE TABLE IF NOT EXISTS`，即使表已存在也会报 `permission denied for schema`。所以应用启动时会先查 `information_schema`：六张表齐全就完全跳过 DDL，缺任何一张才尝试创建。
+
+| 情况 | 结果 |
+|---|---|
+| 表已建好，角色无 DDL 权限 | 正常启动，跳过全部 DDL |
+| 表未建，角色有 DDL 权限 | 正常启动，自动建表 |
+| 表未建，角色无 DDL 权限 | **拒绝启动**，明确报 permission denied |
+
+最后一种是刻意的：带着不存在的表提供服务，会在第一次写入时才炸，那时已经有用户在用了。
+
+### 建表脚本
+
+同样的内容在 [`deploy/schema.sql`](schema.sql)。把 `<schema>` 换成该应用的 schema 名，`<app_role>` 换成应用连接用的角色。
+
+```sql
+-- 生成自各 PostgreSQL 插件的建表语句，与代码保持一致。
+-- DeepSeek Harness —— 应用所需的全部对象
+-- 把 <schema> 换成该应用的 schema 名（由 deployment.appName 折叠而来：
+-- order-svc -> order_svc）。每个应用一个 schema，不可共用。
+
+CREATE SCHEMA IF NOT EXISTS <schema>;
+
+-- ── 会话 ──────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS <schema>.session (
+  id         text        PRIMARY KEY,
+  meta       jsonb       NOT NULL,
+  revision   bigint      NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS <schema>.session_event (
+  session_id text    NOT NULL
+    REFERENCES <schema>.session (id) ON DELETE CASCADE,
+  seq        integer NOT NULL,
+  event      jsonb   NOT NULL,
+  PRIMARY KEY (session_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS session_created_at_idx
+  ON <schema>.session (created_at);
+
+-- ── 存储 ──────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS <schema>.kv_unit (
+  unit    text    PRIMARY KEY,
+  version integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS <schema>.kv_record (
+  unit  text  NOT NULL,
+  tbl   text  NOT NULL,
+  key   text  NOT NULL,
+  value jsonb NOT NULL,
+  PRIMARY KEY (unit, tbl, key)
+);
+
+CREATE TABLE IF NOT EXISTS <schema>.kv_global (
+  unit  text  PRIMARY KEY,
+  value jsonb NOT NULL
+);
+
+-- ── 附件 ──────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS <schema>.attachment_object (
+  sha256     text        PRIMARY KEY,
+  media_type text        NOT NULL,
+  bytes      integer     NOT NULL,
+  width      integer     NOT NULL,
+  height     integer     NOT NULL,
+  data       bytea       NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── 应用角色：只给 DML，不给 DDL ──────────────────────────────────────────
+GRANT USAGE ON SCHEMA <schema> TO <app_role>;
+GRANT SELECT, INSERT, UPDATE, DELETE
+  ON ALL TABLES IN SCHEMA <schema> TO <app_role>;
+```
+
+### 六张表存什么
+
+| 表 | 存什么 |
+|---|---|
+| `session` | 会话头。`revision` 每次写入递增，用于判断某副本持有的视图是否过期 |
+| `session_event` | 会话事件日志，一行一事件，按 `seq` 有序。可按 seq 寻址，投影从水位线恢复时只读后缀 |
+| `kv_unit` | 各存储单元的格式版本戳。版本不匹配会拒绝打开而非静默迁移 |
+| `kv_record` | 存储记录。当前使用者：会话投影缓存、工作区、消息反馈 |
+| `kv_global` | 各单元的全局单例槽 |
+| `attachment_object` | 归一化后的图片二进制，按内容寻址。去重靠主键冲突，无需额外逻辑 |
+
+**模型请求用的派生图片变体不落库**，留在容器本地临时目录。每个变体都是「引用 + 路由策略」的确定性函数，被替换的容器会重新生成完全相同的字节。判断原则：只有无法重算的东西才需要持久化。
+
+-----
+
 <a id="plugins"></a>
-## 6. 插件：从写到上架
+## 7. 插件：从写到上架
 
 ### 6.1 三种插件来源
 
@@ -455,7 +553,7 @@ Nacos 换来的是**集中编辑**（不用重新部署、不用改环境变量�
 -----
 
 <a id="troubleshooting"></a>
-## 7. 排错
+## 8. 排错
 
 ### 容器起不来
 

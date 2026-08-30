@@ -32,6 +32,7 @@ import {
   postgresConnectionSchema,
   resolvePostgresPool,
   resolvePostgresSchema,
+  tablesPresent,
 } from '@deepseek-ai/dsh-postgres-schema'
 import type { PostgresConnectionConfig } from '@deepseek-ai/dsh-postgres-schema'
 import type {
@@ -138,18 +139,23 @@ export class PostgresAttachmentStore extends AttachmentStore {
 
   /** Create the object table and the container-local variant cache root. */
   protected async* [Service.init](): AsyncGenerator<() => Promise<void> | void, void, void> {
-    await ensureSchema(this.pool, this.schema)
-    await this.pool.query(
-      `CREATE TABLE IF NOT EXISTS "${this.schema}"."${OBJECT_TABLE}" (
-         sha256     text  PRIMARY KEY,
-         media_type text  NOT NULL,
-         bytes      integer NOT NULL,
-         width      integer NOT NULL,
-         height     integer NOT NULL,
-         data       bytea NOT NULL,
-         created_at timestamptz NOT NULL DEFAULT now()
-       )`,
-    )
+    // A production role often holds no DDL rights, and `IF NOT EXISTS` does not
+    // exempt a statement from the privilege check; a table already there means
+    // there is nothing to create.
+    if (!await tablesPresent(this.pool, this.schema, [OBJECT_TABLE])) {
+      await ensureSchema(this.pool, this.schema)
+      await this.pool.query(
+        `CREATE TABLE IF NOT EXISTS "${this.schema}"."${OBJECT_TABLE}" (
+           sha256     text  PRIMARY KEY,
+           media_type text  NOT NULL,
+           bytes      integer NOT NULL,
+           width      integer NOT NULL,
+           height     integer NOT NULL,
+           data       bytea NOT NULL,
+           created_at timestamptz NOT NULL DEFAULT now()
+         )`,
+      )
+    }
     this.variantRoot = await mkdtemp(join(tmpdir(), 'dsh-attachment-'))
     yield async () => { await this.pool.end() }
   }

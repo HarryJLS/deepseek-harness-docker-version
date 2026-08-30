@@ -162,6 +162,41 @@ export async function ensureSchema(pool: PostgresQueryable, schema: string): Pro
 }
 
 /**
+ * Whether every named table already exists in one schema.
+ *
+ * A production database rarely lets the application own its DDL: a DBA creates
+ * the schema and the tables, and the role the harness connects with holds only
+ * SELECT/INSERT/UPDATE/DELETE. `IF NOT EXISTS` does NOT exempt a statement from
+ * the privilege check — `CREATE TABLE IF NOT EXISTS` on a table that already
+ * exists still fails with `permission denied for schema` — so a plugin that
+ * issues its DDL unconditionally cannot start against such a database at all.
+ *
+ * Callers use this to look before they leap: every table present means the DDL
+ * has nothing to do and is skipped, and anything missing still runs the
+ * creates, so a half-provisioned database fails loudly rather than serving with
+ * tables that do not exist.
+ *
+ * The query reads `information_schema`, which needs no privilege beyond the
+ * connection itself.
+ * @param pool - anything that can run a statement.
+ * @param schema - schema name, already validated by {@link assertSchemaName}.
+ * @param tables - every table the caller is about to create.
+ * @returns true when all of them already exist.
+ */
+export async function tablesPresent(
+  pool: PostgresQueryable,
+  schema: string,
+  tables: readonly string[],
+): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT count(*)::int AS present FROM information_schema.tables
+     WHERE table_schema = '${schema}'
+       AND table_name IN (${tables.map(name => `'${name}'`).join(', ')})`,
+  ) as { rows?: { present?: number }[] }
+  return result.rows?.[0]?.present === tables.length
+}
+
+/**
  * How one plugin reaches the database. Every harness PostgreSQL plugin
  * declares these fields, so they are defined once here and resolved by
  * {@link resolvePostgresPool} rather than defaulted inline at each site.
