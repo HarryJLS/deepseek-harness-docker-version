@@ -180,6 +180,9 @@ function publishResolvedEnv(appName) {
  * @returns the declared registry, token, and package specs.
  */
 async function parseRoster(content, dataId) {
+  // A deployment that declares no roster is the normal case, not an error: the
+  // entry is absent until an operator creates one.
+  if (content === undefined || content.trim() === '') return { packages: [] }
   const { parse } = await import(YAML_MODULE)
   const document = parse(content)
   if (document === null || typeof document !== 'object' || Array.isArray(document)) {
