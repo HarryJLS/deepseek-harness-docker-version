@@ -1,6 +1,6 @@
 {
-  "name": "@deepseek-ai/dsh-bundle-docker",
-  "description": "Container-deployment bundle for the DeepSeek Harness: all-interface bind, Nacos-backed live configuration, OceanBase persistence",
+  "name": "@deepseek-ai/dsh-session-persistence-mysql",
+  "description": "MySQL session persistence for the DeepSeek Harness",
   "version": "0.1.2-alpha.1",
   "publishConfig": {
     "access": "public"
@@ -8,7 +8,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
-    "directory": "packages/bundle/docker"
+    "directory": "packages/session/session-persistence-mysql"
   },
   "type": "module",
   "main": "lib/index.js",
@@ -22,37 +22,31 @@
       "types": "./lib/types/invariant.d.ts",
       "default": "./lib/invariant.js"
     },
-    "./cordis.patch.yml": "./cordis.patch.yml",
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
     "lib/invariant.js",
-    "cordis.patch.yml",
     "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    }
-  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
-    "@deepseek-ai/dsh-invariants": "workspace:^"
+    "@deepseek-ai/dsh-invariants": "workspace:^",
+    "@deepseek-ai/dsh-mysql-schema": "workspace:^",
+    "@deepseek-ai/dsh-session": "workspace:^",
+    "@deepseek-ai/dsh-session-persistence": "workspace:^"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-attachment-mysql": "workspace:^",
-    "@deepseek-ai/dsh-credentials-nacos": "workspace:^",
-    "@deepseek-ai/dsh-nacos-file-mirror": "workspace:^",
-    "@deepseek-ai/dsh-session-persistence-mysql": "workspace:^",
-    "@deepseek-ai/dsh-settings-nacos": "workspace:^",
-    "@deepseek-ai/dsh-storage-mysql": "workspace:^"
+    "@deepseek-ai/schemastery": "workspace:^",
+    "mysql2": "^3.11.5"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
-    "yaml": "^2.9.0"
+    "@deepseek-ai/dsh-mysql-schema": "workspace:^",
+    "@deepseek-ai/dsh-session": "workspace:^",
+    "@deepseek-ai/dsh-session-persistence": "workspace:^"
   }
 }

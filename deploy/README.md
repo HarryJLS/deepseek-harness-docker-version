@@ -24,23 +24,23 @@ readable *before* a remote configuration source can be contacted?
 
 | Class | Holds | Where | Changing it |
 |---|---|---|---|
-| Static | bind host/port, access gates, Nacos + PostgreSQL coordinates, which plugins are mounted | `cordis.patch.yml` in the image | rebuild and redeploy |
+| Static | bind host/port, access gates, Nacos + OceanBase/MySQL coordinates, which plugins are mounted | `cordis.patch.yml` in the image | rebuild and redeploy |
 | Live | model routes and every user-settings namespace | Nacos `dsh-settings.yaml` | edit in the Nacos console |
 | Live | API keys and authorization grants | Nacos `dsh-credentials.yaml` | edit in the Nacos console |
 | Live | application name, plugin roster | Nacos `dsh-settings.yaml` / `dsh-plugin-roster.yml` | restart the container |
 
 ## Durable state
 
-[`schema.sql`](schema.sql) holds the DDL for every table below, for a deployment whose
+[`schema-mysql.sql`](schema-mysql.sql) holds the DDL for every table below, for a deployment whose
 database role owns no DDL rights. The plugins check `information_schema` first and
 skip their creates when every table is already there, so a DBA-provisioned schema
 needs no privilege grant beyond SELECT/INSERT/UPDATE/DELETE.
 
 | State | Backend | Table |
 |---|---|---|
-| Session event logs | PostgreSQL | `dsh.session`, `dsh.session_event` |
-| `ctx.storage` documents | PostgreSQL | `dsh.kv_unit`, `dsh.kv_record`, `dsh.kv_global` |
-| Attachment images | PostgreSQL | `dsh.attachment_object` |
+| Session event logs | OceanBase (MySQL mode) | `dsh_session`, `dsh_session_event` |
+| `ctx.storage` documents | OceanBase (MySQL mode) | `dsh_kv_unit`, `dsh_kv_record`, `dsh_kv_global` |
+| Attachment images | OceanBase (MySQL mode) | `dsh_attachment_object` |
 | User settings | Nacos | `dsh-settings.yaml` |
 | Credentials | Nacos | `dsh-credentials.yaml` |
 
@@ -64,7 +64,7 @@ out to git.
 |---|---|---|
 | `dsh` | 3080 | the harness Web UI and `/api` |
 | `nacos` | 8848 / 9848 / 8080 | config API / its derived gRPC port / the console |
-| `postgres` | — | not published; reached over the compose network |
+| `oceanbase` | 2881 | OceanBase (MySQL mode), reached over the compose network |
 
 Nacos 3.x serves its console on **8080**, not on 8848 as 2.x did.
 
@@ -142,9 +142,8 @@ time.
 | `DSH_NACOS_SETTINGS_DATA_ID` | `dsh-settings.yaml` | settings entry |
 | `DSH_NACOS_CREDENTIALS_DATA_ID` | `dsh-credentials.yaml` | credentials entry |
 | `DSH_NACOS_USERNAME` / `DSH_NACOS_PASSWORD` | unset | Nacos auth, when enabled |
-| `DSH_POSTGRES_URL` | unset | full connection string; wins over the discrete fields |
-| `DSH_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `postgres` / `5432` / `dsh` / `dsh` / unset | discrete connection fields |
-| `DSH_POSTGRES_SCHEMA` | derived from `DSH_APP_NAME` | overrides the derived schema with an exact name |
+| `DSH_MYSQL_URL` | unset | full connection string; wins over the discrete fields |
+| `DSH_MYSQL_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `oceanbase` / `2881` / `dsh` / `root` / unset | discrete connection fields; credentials may instead come from Nacos `deployment.database` |
 | `DSH_PLUGINS` | empty | plugin specs installed at start, merged with the Nacos roster |
 | `DSH_NACOS_PLUGINS_DATA_ID` | `dsh-plugin-roster.yml` | roster entry |
 | `DSH_NPM_REGISTRY` | unset | registry used when the roster entry names none |
@@ -159,19 +158,7 @@ time.
   deployment.
 - **The database is the single source of truth for sessions.** Several replicas
   may share one database; each keeps its own derived variant cache.
-- **Several applications share one database, but each owns its Nacos.** Every
-  entry is named the same in every deployment, so an application built on this
-  image makes no naming decision; its own Nacos (namespace or server) is what
-  separates its configuration. The database is the shared backend, so name the
-  application in the settings entry's `deployment.appName` — its tables then
-  land in a schema of that name. They must not share a schema —
-  `kv_record`'s primary key is `(unit, tbl, key)` and carries no application
-  column, so two applications writing the same unit overwrite each other. The
-  database role needs `CREATE` on the database to make each schema on first
-  start.
-- **Renaming an application does not migrate it.** A changed `deployment.appName`
-  points the container at an empty schema on its next start; the previous one is
-  left in place. The name is read once at start, because the schema is chosen
-  when each PostgreSQL plugin opens its pool.
+- **Several applications share one database, but each owns its Nacos.** Every entry is named the same in every deployment, so an application built on this image makes no naming decision; its own Nacos (namespace or server) is what separates its configuration. The database is the shared backend, and every table uses the leading `app` column to isolate rows. Set the application name in `deployment.appName`; it is stored verbatim, so `order-svc` and `Order Service` are different values. All six tables are shared and use the `dsh_` prefix.
+- **Renaming an application does not migrate it.** A changed `deployment.appName` points the container at a different set of rows on its next start; previous rows remain under the old value. The name is read once at start, when each MySQL plugin opens its pool.
 - **`prepare-profile.mjs` runs before the harness** and is idempotent: a
   restarted container with an unchanged roster converges on the same profile.

@@ -133,44 +133,96 @@ async function readNacosEntries(dataIds) {
 }
 
 /**
- * The application name, which scopes this deployment's PostgreSQL schema.
+ * Environment variable each declared database field is published as, and the
+ * `!!js` expression in the composition that reads it.
  *
- * The settings entry is the declaring home: an application owns its Nacos, so
- * naming itself there keeps its whole identity in one place and leaves the
- * container's environment to say only where Nacos and the database are. The
- * environment variable remains the fallback, for a deployment that has no
- * settings entry yet or pins the name outside Nacos.
- *
- * Read once, here, because the schema is chosen when each PostgreSQL plugin
- * opens its pool: a later change cannot move tables that are already open, so
- * it takes effect on the next start rather than pretending to be live.
- * @param content - the settings entry body, or undefined when absent.
- * @returns the resolved application name.
+ * Declared once so the settings entry's vocabulary and the container's
+ * environment cannot drift apart: a field added here is readable from Nacos
+ * and from the environment with no other change.
  */
-async function resolveAppName(content) {
-  if (content !== undefined && content.trim() !== '') {
-    const { parse } = await import(YAML_MODULE)
-    const document = parse(content)
-    const declared = document?.deployment?.appName
-    if (typeof declared === 'string' && declared.trim() !== '') {
-      console.log(`entrypoint: deployment.appName = ${declared.trim()} (from the settings entry)`)
-      return declared.trim()
-    }
-  }
-  return process.env.DSH_APP_NAME ?? 'dsh'
+const DATABASE_ENV = {
+  url: 'DSH_MYSQL_URL',
+  host: 'DSH_MYSQL_HOST',
+  port: 'DSH_MYSQL_PORT',
+  database: 'DSH_MYSQL_DB',
+  user: 'DSH_MYSQL_USER',
+  password: 'DSH_MYSQL_PASSWORD',
 }
 
 /**
- * Publish the resolved name to the environment the harness will start with.
+ * What this deployment declares about itself in its Nacos settings entry: the
+ * application name that scopes its rows, and how to reach the database.
+ *
+ * The settings entry is the declaring home. An application owns its Nacos, so
+ * naming itself and its database credentials there keeps its whole identity in
+ * one place and leaves the container's environment to say only where Nacos
+ * lives. The environment remains the fallback for every field, for a
+ * deployment that has no settings entry yet or pins a value outside Nacos.
+ *
+ * Credentials specifically belong here rather than in the container's
+ * environment: rotating a database password becomes a Nacos edit and a
+ * restart, not a redeploy, and the secret stops appearing in `docker inspect`
+ * and in the compose file. Scope the entry's Nacos namespace accordingly — it
+ * now holds a database password.
+ *
+ * Read once, at start, because these values are bound when each database
+ * plugin opens its pool: a later change cannot move rows that are already
+ * written, so it takes effect on the next start rather than pretending to be
+ * live.
+ * @param content - the settings entry body, or undefined when absent.
+ * @returns the application name and every declared database field.
+ */
+async function resolveDeployment(content) {
+  const fallback = { appName: process.env.DSH_APP_NAME ?? 'dsh', database: {} }
+  if (content === undefined || content.trim() === '') return fallback
+  const { parse } = await import(YAML_MODULE)
+  const deployment = parse(content)?.deployment
+  if (deployment === undefined || deployment === null) return fallback
+
+  const declaredName = deployment.appName
+  const appName = typeof declaredName === 'string' && declaredName.trim() !== ''
+    ? declaredName.trim()
+    : fallback.appName
+  if (appName !== fallback.appName || typeof declaredName === 'string') {
+    console.log(`entrypoint: deployment.appName = ${appName} (from the settings entry)`)
+  }
+
+  // Only a field the entry actually declares is published. Writing an empty
+  // value for an absent one would override the container's environment with
+  // nothing, which is the opposite of a fallback.
+  const database = {}
+  for (const field of Object.keys(DATABASE_ENV)) {
+    const value = deployment.database?.[field]
+    if (value === undefined || value === null || String(value).trim() === '') continue
+    database[field] = String(value).trim()
+  }
+  if (Object.keys(database).length > 0) {
+    // The password is deliberately not among the names logged.
+    console.log(`entrypoint: deployment.database declares ${Object.keys(database).join(', ')}`)
+  }
+  return { appName, database }
+}
+
+/**
+ * Publish the resolved values to the environment the harness will start with.
  *
  * The entrypoint sources this file before `exec`, because a variable this
  * script sets cannot reach a sibling process: the harness reads `DSH_APP_NAME`
- * through the `!!js` expressions in its composition, so the value has to be in
- * the environment rather than passed as an argument.
- * @param appName - the resolved application name.
+ * and the `DSH_MYSQL_*` fields through the `!!js` expressions in its
+ * composition, so the values have to be in the environment rather than passed
+ * as arguments.
+ *
+ * The file holds a database password. It is written under `/run`, which is a
+ * tmpfs the container discards on stop, and is read by exactly one shell.
+ * @param resolved - the application name and declared database fields.
  */
-function publishResolvedEnv(appName) {
-  writeFileSync(ENV_FILE, `export DSH_APP_NAME=${JSON.stringify(appName)}\n`)
+function publishResolvedEnv({ appName, database }) {
+  const lines = [`export DSH_APP_NAME=${JSON.stringify(appName)}`]
+  for (const [field, variable] of Object.entries(DATABASE_ENV)) {
+    if (database[field] === undefined) continue
+    lines.push(`export ${variable}=${JSON.stringify(database[field])}`)
+  }
+  writeFileSync(ENV_FILE, `${lines.join('\n')}\n`)
 }
 
 /**
@@ -327,5 +379,5 @@ ensureProfile()
 selectContainerBundle()
 
 const entries = await readNacosEntries([SETTINGS_DATA_ID, ROSTER_DATA_ID])
-publishResolvedEnv(await resolveAppName(entries[SETTINGS_DATA_ID]))
+publishResolvedEnv(await resolveDeployment(entries[SETTINGS_DATA_ID]))
 installRoster(await parseRoster(entries[ROSTER_DATA_ID], ROSTER_DATA_ID))

@@ -1,9 +1,10 @@
 # DeepSeek Harness — container stack.
 #
 # Three services: the harness, the Nacos it reads live configuration from, and
-# the PostgreSQL it keeps durable state in. Nothing is bind-mounted: every
-# writable path the harness needs lives in one of the two backing services, so
-# a replaced container starts clean and loses nothing.
+# the OceanBase (MySQL mode) it keeps durable state in. The only bind mount is
+# the provisioning script the database runs once at bootstrap; every writable
+# path the harness needs lives in one of the two backing services, so a
+# replaced container starts clean and loses nothing.
 #
 #   docker compose -f deploy/docker-compose.yml up -d --build
 #
@@ -15,25 +16,40 @@
 name: dsh
 
 services:
-  postgres:
-    image: postgres:17-alpine
+  oceanbase:
+    image: oceanbase/oceanbase-ce:4.3.5-lts
     environment:
-      POSTGRES_USER: dsh
-      POSTGRES_PASSWORD: dsh
-      POSTGRES_DB: dsh
+      # `mini` fits a single-node OceanBase onto a developer machine: a 6G
+      # memory limit and 5G data and log files. It still reserves that memory
+      # up front and refuses to bootstrap without it, so Docker's VM needs
+      # roughly 10G for this stack — the 8G default is not enough. A production
+      # cluster is not deployed this way.
+      MODE: mini
+      OB_TENANT_PASSWORD: dsh
+      OB_SYS_PASSWORD: dsh
     ports:
       # Published for inspection from outside the compose network. The harness
       # itself reaches the database by service name and does not need this.
-      - '5432:5432'
+      - '2881:2881'
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - obdata:/root/ob
+      # The image runs everything under this directory once the tenant is
+      # bootstrapped. Mounting the DDL here models production exactly: a DBA
+      # provisions the database and the harness role never issues DDL at all.
+      - ./schema-mysql.sql:/root/boot/init.d/00-dsh-schema.sql:ro
     healthcheck:
-      # `-d` matters: without it pg_isready probes a database named after the
-      # user and reports ready before `dsh` itself exists.
-      test: ['CMD-SHELL', 'pg_isready -U dsh -d dsh']
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      # Bootstrap takes minutes on a cold volume, and the init.d scripts run
+      # after the port opens — so readiness is one of the harness's own tables
+      # existing, not the server accepting connections.
+      test:
+        - CMD-SHELL
+        - >-
+          obclient -h127.0.0.1 -P2881 -uroot@test -pdsh -Ddsh
+          -e 'select 1 from dsh_session limit 1'
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      start_period: 300s
 
   nacos:
     image: nacos/nacos-server:v3.0.2
@@ -74,26 +90,30 @@ services:
         # from so the client build metadata is honest.
         DSH_CLIENT_COMMIT_HASH: ${DSH_CLIENT_COMMIT_HASH:-0000000}
     depends_on:
-      postgres:
+      oceanbase:
         condition: service_healthy
       nacos:
         condition: service_healthy
     environment:
-      # Names this application. It selects the PostgreSQL schema the tables live
-      # in and prefixes the Nacos entries this container reads, so several
-      # applications built on one image share the database and the Nacos server
+      # Names this application. It is written into the `app` column that leads
+      # every harness table's primary key, so several applications built on one
+      # image share one database, one set of `dsh_` tables, and one Nacos server
       # without sharing a row. Changing it points the container at a different
-      # schema and a different pair of Nacos entries — the old ones are left
-      # untouched, not migrated.
+      # set of rows — the old ones are left untouched, not migrated.
       DSH_APP_NAME: ${DSH_APP_NAME:-dsh}
       DSH_NACOS_HOST: nacos
       DSH_NACOS_PORT: '8848'
       DSH_NACOS_GROUP: DEFAULT_GROUP
-      DSH_POSTGRES_HOST: postgres
-      DSH_POSTGRES_PORT: '5432'
-      DSH_POSTGRES_DB: dsh
-      DSH_POSTGRES_USER: dsh
-      DSH_POSTGRES_PASSWORD: dsh
+      # Where the database is. The account it is reached with is NOT here: the
+      # entrypoint reads `deployment.database.user` and `.password` from the
+      # Nacos settings entry, so rotating the password is a Nacos edit and a
+      # restart rather than a redeploy, and the secret stays out of the compose
+      # file and out of `docker inspect`. A stack whose settings entry declares
+      # no account falls back to these variables, and then to the plugin
+      # defaults — which fail the connection loudly rather than serving.
+      DSH_MYSQL_HOST: oceanbase
+      DSH_MYSQL_PORT: '2881'
+      DSH_MYSQL_DB: dsh
       # Space- or comma-separated package specs installed from the registry at
       # start. Changing this list changes the deployment's plugins without
       # rebuilding the image.
@@ -102,4 +122,4 @@ services:
       - '3080:3080'
 
 volumes:
-  pgdata:
+  obdata:

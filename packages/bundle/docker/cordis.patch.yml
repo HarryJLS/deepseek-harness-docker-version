@@ -20,12 +20,13 @@
 # is what separates one application's configuration from another's.
 #
 # The database is the one backend applications DO share, so it is the one thing
-# that must be scoped: `DSH_APP_NAME` names the PostgreSQL schema each plugin's
-# tables live in. `kv_record`'s primary key is (unit, tbl, key) and carries no
-# application column, so two applications in one schema overwrite each other.
-# The name is resolved by the entrypoint — from the settings entry's
-# `deployment.appName`, else this variable — and reaches the rows below as an
-# ordinary environment variable.
+# that must be scoped: `DSH_APP_NAME` is written into the `app` column that
+# leads every harness table's primary key. OceanBase speaks MySQL, where a
+# schema IS a database, so there is no namespace to give each application — the
+# column is the separation, and a row not scoped by it is a row two
+# applications overwrite. The name is resolved by the entrypoint — from the
+# settings entry's `deployment.appName`, else this variable — and reaches the
+# rows below as an ordinary environment variable.
 #
 # A patch replaces a row's whole `config`, so each row below restates every key
 # it owns, and a provider swap is a `disabled` plus an `insert` rather than a
@@ -87,7 +88,7 @@
         password: !!js process.env.DSH_NACOS_PASSWORD
         writable: true
 
-# ── durable storage: PostgreSQL ────────────────────────────────────────────
+# ── durable storage: OceanBase ─────────────────────────────────────────────
 #
 # The JSON backend writes one document per unit under the harness home, which a
 # container without a volume loses on every restart. The database is one medium
@@ -99,24 +100,23 @@
   disabled: true
 
 - insert:
-    - id: storage-postgres
-      name: '@deepseek-ai/dsh-storage-postgres'
+    - id: storage-mysql
+      name: '@deepseek-ai/dsh-storage-mysql'
       config:
-        name: postgres
-        url: !!js process.env.DSH_POSTGRES_URL
-        host: !!js process.env.DSH_POSTGRES_HOST ?? 'postgres'
-        port: !!js Number(process.env.DSH_POSTGRES_PORT ?? 5432)
-        database: !!js process.env.DSH_POSTGRES_DB ?? 'dsh'
-        user: !!js process.env.DSH_POSTGRES_USER ?? 'dsh'
-        password: !!js process.env.DSH_POSTGRES_PASSWORD
+        name: mysql
+        url: !!js process.env.DSH_MYSQL_URL
+        host: !!js process.env.DSH_MYSQL_HOST ?? 'oceanbase'
+        port: !!js Number(process.env.DSH_MYSQL_PORT ?? 2881)
+        database: !!js process.env.DSH_MYSQL_DB ?? 'dsh'
+        user: !!js process.env.DSH_MYSQL_USER ?? 'root'
+        password: !!js process.env.DSH_MYSQL_PASSWORD
         app: !!js process.env.DSH_APP_NAME ?? 'dsh'
-        schema: !!js process.env.DSH_POSTGRES_SCHEMA
 
 - id: storage-domain
   config:
-    backend: postgres
+    backend: mysql
 
-# ── session logs: PostgreSQL ───────────────────────────────────────────────
+# ── session logs: OceanBase ────────────────────────────────────────────────
 #
 # The JSONL backend writes one artifact per session under the harness home.
 # That is the state a container can least afford to lose: a replaced replica
@@ -131,17 +131,16 @@
   disabled: true
 
 - insert:
-    - id: session-persistence-postgres
-      name: '@deepseek-ai/dsh-session-persistence-postgres'
+    - id: session-persistence-mysql
+      name: '@deepseek-ai/dsh-session-persistence-mysql'
       config:
-        url: !!js process.env.DSH_POSTGRES_URL
-        host: !!js process.env.DSH_POSTGRES_HOST ?? 'postgres'
-        port: !!js Number(process.env.DSH_POSTGRES_PORT ?? 5432)
-        database: !!js process.env.DSH_POSTGRES_DB ?? 'dsh'
-        user: !!js process.env.DSH_POSTGRES_USER ?? 'dsh'
-        password: !!js process.env.DSH_POSTGRES_PASSWORD
+        url: !!js process.env.DSH_MYSQL_URL
+        host: !!js process.env.DSH_MYSQL_HOST ?? 'oceanbase'
+        port: !!js Number(process.env.DSH_MYSQL_PORT ?? 2881)
+        database: !!js process.env.DSH_MYSQL_DB ?? 'dsh'
+        user: !!js process.env.DSH_MYSQL_USER ?? 'root'
+        password: !!js process.env.DSH_MYSQL_PASSWORD
         app: !!js process.env.DSH_APP_NAME ?? 'dsh'
-        schema: !!js process.env.DSH_POSTGRES_SCHEMA
 
 # ── credentials: Nacos ─────────────────────────────────────────────────────
 #
@@ -168,7 +167,7 @@
         username: !!js process.env.DSH_NACOS_USERNAME
         password: !!js process.env.DSH_NACOS_PASSWORD
 
-# ── attachments: PostgreSQL ────────────────────────────────────────────────
+# ── attachments: OceanBase ─────────────────────────────────────────────────
 #
 # Normalized image bytes back references the session log records, so losing
 # them breaks a conversation's history rather than merely degrading it. They
@@ -179,17 +178,16 @@
   disabled: true
 
 - insert:
-    - id: attachment-postgres
-      name: '@deepseek-ai/dsh-attachment-postgres'
+    - id: attachment-mysql
+      name: '@deepseek-ai/dsh-attachment-mysql'
       config:
-        url: !!js process.env.DSH_POSTGRES_URL
-        host: !!js process.env.DSH_POSTGRES_HOST ?? 'postgres'
-        port: !!js Number(process.env.DSH_POSTGRES_PORT ?? 5432)
-        database: !!js process.env.DSH_POSTGRES_DB ?? 'dsh'
-        user: !!js process.env.DSH_POSTGRES_USER ?? 'dsh'
-        password: !!js process.env.DSH_POSTGRES_PASSWORD
+        url: !!js process.env.DSH_MYSQL_URL
+        host: !!js process.env.DSH_MYSQL_HOST ?? 'oceanbase'
+        port: !!js Number(process.env.DSH_MYSQL_PORT ?? 2881)
+        database: !!js process.env.DSH_MYSQL_DB ?? 'dsh'
+        user: !!js process.env.DSH_MYSQL_USER ?? 'root'
+        password: !!js process.env.DSH_MYSQL_PASSWORD
         app: !!js process.env.DSH_APP_NAME ?? 'dsh'
-        schema: !!js process.env.DSH_POSTGRES_SCHEMA
 
 # ── mirrored entries: Nacos to file ────────────────────────────────────────
 #

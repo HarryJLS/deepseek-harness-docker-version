@@ -59,7 +59,7 @@ COPY --from=build /src /app
 COPY deploy/deploy-entrypoint.sh deploy/prepare-profile.mjs /usr/local/bin/
 RUN chmod +x /usr/local/bin/deploy-entrypoint.sh && mkdir -p "$DSH_HOME"
 
-# The bind, the access gates, and the Nacos/PostgreSQL coordinates come from
+# The bind, the access gates, and the Nacos/OceanBase coordinates come from
 # the dsh-bundle-docker layer that the entrypoint selects into the profile.
 ENV DSH_BIN=/app/apps/cli/lib/bin.js \
     DSH_PROFILE=web \

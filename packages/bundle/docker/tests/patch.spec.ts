@@ -68,9 +68,9 @@ describe('provider swaps', () => {
   it.each([
     ['settings', 'settings-nacos'],
     ['credentials', 'credentials-nacos'],
-    ['storage-json', 'storage-postgres'],
-    ['session-persistence-jsonl', 'session-persistence-postgres'],
-    ['attachment-local', 'attachment-postgres'],
+    ['storage-json', 'storage-mysql'],
+    ['session-persistence-jsonl', 'session-persistence-mysql'],
+    ['attachment-local', 'attachment-mysql'],
   ])('replaces %s with %s', (replaced, replacement) => {
     // Two providers of one service both mount and collide; the disable is what
     // makes a swap a swap rather than a duplicate.
@@ -99,14 +99,15 @@ describe('network exposure', () => {
 
 describe('application scoping', () => {
   /** Every inserted row that owns tables in the database. */
-  const postgresRows = inserted.filter(row => row.name?.endsWith('-postgres') === true)
+  const databaseRows = inserted.filter(row => row.name?.endsWith('-mysql') === true)
 
-  it('scopes every PostgreSQL row by the application name', () => {
-    // Half-scoping is the quiet failure: one plugin reading the app schema
-    // while another still writes `dsh` splits one deployment's state across two
-    // schemas, and nothing reports it until a session cannot find its own rows.
-    expect(postgresRows.length).toBe(3)
-    for (const row of postgresRows) {
+  it('scopes every database row by the application name', () => {
+    // Half-scoping is the quiet failure: one plugin writing the app name into
+    // its rows while another still writes `dsh` splits one deployment's state
+    // across two applications in one table, and nothing reports it until a
+    // session cannot find its own rows.
+    expect(databaseRows.length).toBe(3)
+    for (const row of databaseRows) {
       expect(row.config?.app, `${row.id} is not scoped by DSH_APP_NAME`)
         .toContain('DSH_APP_NAME')
     }
