@@ -45,7 +45,7 @@ import {
 import type { MysqlConnectionConfig } from '@deepseek-ai/dsh-mysql-schema'
 import { MysqlSessionStore } from './store.ts'
 
-export { MysqlSessionStore } from './store.ts'
+export { MYSQL_SESSION_READ_PAGE_SIZE, MysqlSessionStore } from './store.ts'
 
 /** Plugin configuration. */
 export interface Config extends MysqlConnectionConfig {

@@ -37,6 +37,9 @@ import {
 const SESSION_TABLE = mysqlTable('session')
 const EVENT_TABLE = mysqlTable('session_event')
 
+/** Maximum number of event rows returned by one recovery query. */
+export const MYSQL_SESSION_READ_PAGE_SIZE = 1_000
+
 /**
  * Compose the source-qualified revision token. It must identify one storage
  * source AND one revision of the log, so the database and application identity
@@ -124,16 +127,13 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
     const row = header[0]
     if (row === undefined) return undefined
     signal?.throwIfAborted()
-    const [events] = await this.pool.query<mysql.RowDataPacket[]>(
-      `SELECT event FROM \`${EVENT_TABLE}\` WHERE app = ? AND session_id = ? ORDER BY seq ASC`,
-      [this.app, id],
-    )
+    const events = await this.readEvents(id, 0, signal)
     // The coordinator freezes and publishes these graphs in place, so they must
     // be fresh and unaliased. The driver decodes each `json` column into a new
     // value per read, which already satisfies that.
     return {
       meta: toHeader(row.meta, id),
-      events: events.map(entry => entry.event as SessionEvent),
+      events,
       revision: revisionToken(this.source, row.revision as string),
     }
   }
@@ -168,14 +168,10 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
     const row = header[0]
     if (row === undefined) return undefined
     signal?.throwIfAborted()
-    const [events] = await this.pool.query<mysql.RowDataPacket[]>(
-      `SELECT event FROM \`${EVENT_TABLE}\`
-       WHERE app = ? AND session_id = ? AND seq >= ? ORDER BY seq ASC`,
-      [this.app, id, fromSeq],
-    )
+    const events = await this.readEvents(id, fromSeq, signal)
     return {
       meta: toHeader(row.meta, id),
-      events: events.map(entry => entry.event as SessionEvent),
+      events,
     }
   }
 
@@ -280,6 +276,33 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
 
   async close(): Promise<void> {
     await this.pool.end()
+  }
+
+  /** Read event rows with a keyset cursor so recovery never returns one huge result set. */
+  private async readEvents(
+    id: SessionId,
+    fromSeq: number,
+    signal?: AbortSignal,
+  ): Promise<SessionEvent[]> {
+    const events: SessionEvent[] = []
+    let afterSeq = fromSeq - 1
+    for (;;) {
+      signal?.throwIfAborted()
+      const [page] = await this.pool.query<mysql.RowDataPacket[]>(
+        `SELECT seq, event FROM \`${EVENT_TABLE}\`
+         WHERE app = ? AND session_id = ? AND seq > ?
+         ORDER BY seq ASC LIMIT ?`,
+        [this.app, id, afterSeq, MYSQL_SESSION_READ_PAGE_SIZE],
+      )
+      for (const entry of page) events.push(entry.event as SessionEvent)
+      if (page.length < MYSQL_SESSION_READ_PAGE_SIZE) break
+      const nextSeq = page.at(-1)?.seq
+      if (typeof nextSeq !== 'number' || !Number.isSafeInteger(nextSeq) || nextSeq <= afterSeq) {
+        throw new Error(`session-persistence-mysql: invalid event page cursor for session ${id}`)
+      }
+      afterSeq = nextSeq
+    }
+    return events
   }
 
   /** Insert one contiguous batch of events, keyed by their own seq. */

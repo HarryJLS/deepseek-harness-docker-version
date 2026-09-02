@@ -93,7 +93,7 @@ No direct invalidation; the consuming plugin owns any request-prefix changes.
 These limits define when the package is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
 
 - **No raw artifact** — `supportsRawArtifacts` is false, so the verbatim-bytes export path is unavailable; a caller wanting a file gets a reconstruction from parsed events or nothing.
-- **A whole-log read loads every row** — `loadStored` has no pagination. Sessions are bounded by compaction in practice, but a very long log is one large query.
+- **Recovery still materializes the complete logical log** — `loadStored` reads event rows in keyset pages of 1,000 using `seq`, then returns the complete event array required by the shared coordinator. Paging limits each database result set and driver buffer; it does not remove the in-process session history.
 - **No retention** — sessions are never pruned; a deployment wanting a retention window owns that outside this package.
 - **Header validation is shallow** — a stored header that is an object is trusted as a `SessionHeader`; a corrupted one surfaces later, at the seam that reads it.
 - **Isolation is only as good as the predicates** — `app` separates deployments because every statement binds it. One missed predicate would list or resume another application's sessions, where a per-database separation would have failed with a missing table instead.
