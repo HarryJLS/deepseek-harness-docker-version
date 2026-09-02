@@ -104,6 +104,10 @@ services:
       DSH_NACOS_HOST: nacos
       DSH_NACOS_PORT: '8848'
       DSH_NACOS_GROUP: DEFAULT_GROUP
+      # The Nacos namespace this application's full configuration lives in:
+      # settings, credentials, plugin roster, and the mirrored patch and agents
+      # entries are all read from here; each application owns its own namespace.
+      DSH_NACOS_NAMESPACE: order-svc
       # Where the database is. The account it is reached with is NOT here: the
       # entrypoint reads `deployment.database.user` and `.password` from the
       # Nacos settings entry, so rotating the password is a Nacos edit and a
