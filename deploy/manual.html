@@ -225,6 +225,7 @@ records: {}</code></pre>
 <section id="s4">
   <h2><span class="n">4</span>五个 Nacos 条目</h2>
   <p class="lede">五个条目在每个部署里<strong>名字完全相同</strong> —— 每个应用拥有自己的 Nacos 命名空间，隔离由命名空间完成，不靠给条目起不同的名字。这样基于同一镜像的应用不需要做任何命名决策。</p>
+  <p>下面每个条目的示例是 <code>order-svc</code> 命名空间里<strong>当前实际发布的内容</strong>（凭据值已脱敏），可直接对照新建。</p>
   <div class="scroll"><table>
     <thead><tr><th>Data ID</th><th>类型</th><th>管什么</th><th>生效</th></tr></thead>
     <tbody>
@@ -242,17 +243,15 @@ records: {}</code></pre>
     <div class="body">
       <p>键是命名空间名，值是该命名空间的用户覆盖层。<strong>只写要覆盖的</strong>，没写的落回 schema 默认值。</p>
       <p>顶部的 <code>deployment</code> 不是设置命名空间，是这个部署的身份声明 —— entrypoint 在 harness 启动前读它，决定写入各张表 <code>app</code> 列的值以及数据库连接凭据。</p>
-      <pre><code># 应用身份。改了要重启容器：表打开后无法搬家。
-deployment:
+            <pre><code>deployment:
   appName: order-svc
-
-# 新会话默认用哪个模型
+  database:
+    user: root@test
+    password: dsh
 agent-default-model:
   provider: deepseek-official
   model: deepseek-v4-flash
   reasoningEffort: high
-
-# DeepSeek 官方适配器：这个应用允许用的模型清单
 llm-deepseek:
   models:
     - id: deepseek-v4-flash
@@ -261,15 +260,16 @@ llm-deepseek:
       contextWindow: 1000000
       inputModalities:
         - text
-
-# agent 主循环：单步内最多并发多少个工具调用。1 = 串行。
 agent-loop:
   maxParallelToolCalls: 4
-
-# 子 agent 模型选择。false = 跟随主 agent 的模型。
 subagent-model-selection:
   enabled: false
-  allowedModels: []</code></pre>
+  allowedModels: []
+ui-onboarding:
+  welcomeNoticeVersion: 2026-08-13.1
+permission:
+  defaultPreset: danger-full-access
+      </code></pre>
       <h4>接入第三方模型供应商</h4>
       <p>用 <code>llm-pi-ai</code>，填了 provider 才会注册路由：</p>
       <pre><code>llm-pi-ai:
@@ -290,13 +290,15 @@ subagent-model-selection:
   <div class="entry">
     <header><span class="name">dsh-credentials.yaml</span><span class="chip live">秒级生效</span><span class="what">API key 与授权记录</span></header>
     <div class="body">
-      <pre><code># refs — 按环境变量名索引的密钥，供 LLM 适配器按名解析
-refs:
-  DEEPSEEK_API_KEY: sk-你的真实key
-  MY_VENDOR_API_KEY: sk-第三方供应商的key
-
-# records — 授权凭据记录，没有上层可遮蔽，存在即事实
-records: {}</code></pre>
+            <pre><code>refs:
+  DEEPSEEK_API_KEY: sk-REPLACE_WITH_YOUR_KEY
+records:
+  client-connection/browser-session:
+    kind: grant
+    payload:
+      version: 1
+      secret: REPLACE_WITH_YOUR_SECRET
+      </code></pre>
       <p>三条规则：</p>
       <ul>
         <li><strong>容器环境变量优先且只读。</strong>设了 <code>DEEPSEEK_API_KEY</code> 环境变量，这里的同名 ref 被遮蔽。</li>
@@ -311,24 +313,33 @@ records: {}</code></pre>
     <header><span class="name">dsh-plugins.yml</span><span class="chip live">秒级生效</span><span class="what">插件补丁层</span></header>
     <div class="body">
       <p>会被写到 profile 的 <code>cordis.patch.yml</code>，Loader 监听该文件，所以<strong>改完无需重启</strong>。内容是 Loader 的 patch 数组，三种写法：</p>
-      <pre><code># 1) 改已装插件的配置
-#    注意：整块 config 会被替换，要写全这一行拥有的所有键
-- id: session-title
-  config:
-    fallbackMaxWords: 5
-    fallbackMaxBytes: 40
-    maxTitleBytes: 120
-
-# 2) 临时禁用一个插件
-- id: demo-plugin
-  disabled: true
-
-# 3) 挂载一个已安装、但自身没声明 dsh.bundle 的包
-- insert:
-    - id: my-plugin
-      name: my-plugin-package
-      config:
-        someOption: true</code></pre>
+      <pre><code># order-svc 的插件补丁层。会被 nacos-file-mirror 写到
+# $DSH_HOME/profiles/web/cordis.patch.yml，Loader 监听该文件，
+# 所以这个条目改了【无需重启】即可生效。
+#
+# 内容是 Loader 的 patch 数组，三种写法：
+#
+#   1) 改已有插件的配置（整块 config 被替换，要写全该行拥有的所有键）
+#   - id: session-title
+#     config:
+#       maxTitleBytes: 120
+#
+#   2) 禁用某个插件
+#   - id: demo-plugin
+#     disabled: true
+#
+#   3) 挂载一个已安装、但自身没声明 dsh.bundle 的包
+#   - insert:
+#       - id: my-plugin
+#         name: my-plugin-package
+#         config: {}
+#
+# 注意：不要 insert 一个已经自带 dsh.bundle 的包 —— 会重复挂载，
+# 持有具名资源的插件第二次会报 already-open。
+#
+# 空数组 = 不做任何覆盖。
+[]
+      </code></pre>
       <p>不做任何覆盖时写空数组：<code>[]</code></p>
       <div class="note danger"><p><strong>不要 <code>insert</code> 一个已经自带 <code>dsh.bundle</code> 的包</strong> —— 它会被挂载两次。持有具名资源的插件第二次会报 <code>already-open</code>，容器起不来。</p></div>
     </div>
@@ -337,15 +348,14 @@ records: {}</code></pre>
   <div class="entry">
     <header><span class="name">dsh-plugin-roster.yml</span><span class="chip restart">需重启</span><span class="what">插件清单</span></header>
     <div class="body">
-      <pre><code># 私有仓库地址。不写则用 DSH_NPM_REGISTRY，再不写用 pnpm 默认源。
-registry: https://npm.internal.example.com/
-
-# 私有仓库 bearer token。仓库匿名可读时删掉这行。
-token: npm_xxxxxxxxxxxxxxxx
-
+      <pre><code># 这个应用要装哪些插件，以及从哪个 npm 仓库装。
+# 改这里需要重启容器：Loader 组合时一次性解析模块，运行中新装的包它看不见。
+# 清单是声明式的：删掉一行，下次启动会卸载那个包。
+registry: http://dsh-verdaccio:4873/
+token: REPLACE_WITH_REGISTRY_TOKEN
 packages:
-  - dsh-plugin-example@1.2.0
-  - '@acme/dsh-internal-tools'</code></pre>
+  - dsh-demo-plugin@0.1.0
+      </code></pre>
       <p>公共源、无鉴权时的最简形式：</p>
       <pre><code>packages:
   - dsh-plugin-example@1.2.0</code></pre>
@@ -364,14 +374,16 @@ packages:
 
 ## 语言与风格
 - 用中文回答，除非用户用英文提问。
-- 先给结论，再给依据。
+- 先给结论，再给依据。不要复述问题。
 
 ## 边界
 - 涉及退款、改价、取消订单的操作，只说明步骤，不直接执行。
+- 需要查询生产数据库时，先确认是只读查询。
 
 ## 上下文
-- 订单表主键是 order_no，不是自增 id。
-- 时区一律按 Asia/Shanghai 处理。</code></pre>
+- 订单表主键是 `order_no`，不是自增 id。
+- 时区一律按 Asia/Shanghai 处理。
+      </code></pre>
       <p>改动对<strong>新会话</strong>生效，已在进行的会话保持它加载时的指令。</p>
       <div class="note warn"><p>这段文字进每个会话的<em>每次</em>请求。写长了每轮都在付 token。</p></div>
     </div>
