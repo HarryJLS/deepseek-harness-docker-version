@@ -168,7 +168,7 @@ records: {}</code></pre>
     <tbody>
       <tr>
         <td><span class="chip static">静态</span></td>
-        <td>监听地址端口、Nacos 与数据库坐标、能力接缝挂哪个实现</td>
+        <td>监听地址端口、Nacos 坐标、提供方选择</td>
         <td>改 <code>packages/bundle/docker/cordis.patch.yml</code> → 重建镜像</td>
         <td>下次部署</td>
       </tr>
@@ -193,17 +193,13 @@ records: {}</code></pre>
   <h2><span class="n">3</span>环境变量</h2>
   <p class="lede">写在 <code>docker-compose.yml</code> 的 <code>dsh.environment</code> 下，或 K8s Deployment 的 <code>env</code>。这里只放「连上 Nacos 之前必须知道」的东西。</p>
 
-  <h3>Nacos 与数据库坐标</h3>
+  <h3>Nacos 启动坐标</h3>
   <div class="scroll"><table>
     <thead><tr><th>变量</th><th>默认</th><th>说明</th></tr></thead>
     <tbody>
       <tr><td><code>DSH_NACOS_HOST</code> / <code>_PORT</code></td><td><code>nacos</code> / <code>8848</code></td><td>地址；gRPC 端口由 HTTP 端口 +1000 推导。单节点 standalone 即可，不需要集群</td></tr>
       <tr><td><code>DSH_NACOS_NAMESPACE</code></td><td>空（public）</td><td>命名空间 id。<strong>各应用用自己的命名空间隔离</strong></td></tr>
       <tr><td><code>DSH_NACOS_GROUP</code></td><td><code>DEFAULT_GROUP</code></td><td>配置分组</td></tr>
-      <tr><td><code>DSH_NACOS_USERNAME</code> / <code>_PASSWORD</code></td><td>未设</td><td>Nacos 开鉴权时使用</td></tr>
-      <tr><td><code>DSH_MYSQL_URL</code></td><td>未设</td><td>完整连接串；设了就忽略下面的分散字段</td></tr>
-      <tr><td><code>DSH_MYSQL_HOST</code> / <code>_PORT</code></td><td><code>oceanbase</code> / <code>2881</code></td><td>OceanBase 地址</td></tr>
-      <tr><td><code>DSH_MYSQL_DB</code> / <code>_USER</code> / <code>_PASSWORD</code></td><td><code>dsh</code> / <code>root</code> / 未设</td><td>数据库名与凭据；也可在 Nacos 的 <code>deployment.database</code> 中声明</td></tr>
     </tbody>
   </table></div>
 
@@ -212,7 +208,6 @@ records: {}</code></pre>
     <thead><tr><th>变量</th><th>默认</th><th>说明</th></tr></thead>
     <tbody>
       <tr><td><code>DSH_PORT</code></td><td><code>3080</code></td><td>容器内监听端口</td></tr>
-      <tr><td><code>DSH_APP_NAME</code></td><td><code>dsh</code></td><td>应用名的<em>兜底</em>值；settings 条目里的 <code>deployment.appName</code> 优先</td></tr>
       <tr><td><code>DSH_PLUGINS</code></td><td>空</td><td>插件规格，与 Nacos 清单取并集。纯 Nacos 管理时留空</td></tr>
       <tr><td><code>DSH_NPM_REGISTRY</code> / <code>DSH_NPM_TOKEN</code></td><td>未设</td><td>清单条目没写 <code>registry</code> / <code>token</code> 时的兜底</td></tr>
       <tr><td><code>DSH_NACOS_SETTINGS_DATA_ID</code></td><td><code>dsh-settings.yaml</code></td><td rowspan="2">条目名覆盖，一般不用改</td></tr>
@@ -242,12 +237,17 @@ records: {}</code></pre>
     <header><span class="name">dsh-settings.yaml</span><span class="chip live">秒级生效</span><span class="what">应用身份 + 用户设置</span></header>
     <div class="body">
       <p>键是命名空间名，值是该命名空间的用户覆盖层。<strong>只写要覆盖的</strong>，没写的落回 schema 默认值。</p>
-      <p>顶部的 <code>deployment</code> 不是设置命名空间，是这个部署的身份声明 —— entrypoint 在 harness 启动前读它，决定写入各张表 <code>app</code> 列的值以及数据库连接凭据。</p>
+      <p><code>deployment</code> 声明应用名和完整数据库配置。入口程序在启动前读取并校验，字段缺失或 Nacos 不可达会阻止启动；不回退到数据库环境变量。Nacos 开发账号集中在 <code>deployment-config.mjs</code> 的 <code>NACOS_AUTH</code>，示例为 <code>nacos/nacos</code>。</p>
             <pre><code>deployment:
   appName: order-svc
   database:
+    host: oceanbase
+    port: 2881
+    database: dsh
     user: root@test
     password: dsh
+    poolSize: 10
+    snowflakeWorkerId: 0
 agent-default-model:
   provider: deepseek-official
   model: deepseek-v4-flash
@@ -403,9 +403,6 @@ packages:
     environment:
       DSH_NACOS_HOST: nacos.internal
       DSH_NACOS_NAMESPACE: order-svc        # 这个应用自己的 Nacos 命名空间
-      DSH_MYSQL_HOST: oceanbase.internal
-      DSH_MYSQL_PORT: '2881'
-      DSH_MYSQL_DB: dsh
     ports: ['3080:3080']
 
   billing-svc:
@@ -413,9 +410,6 @@ packages:
     environment:
       DSH_NACOS_HOST: nacos.internal
       DSH_NACOS_NAMESPACE: billing-svc      # 只有这里不同
-      DSH_MYSQL_HOST: oceanbase.internal
-      DSH_MYSQL_PORT: '2881'
-      DSH_MYSQL_DB: dsh
     ports: ['3081:3080']</code></pre>
   <h3>应用名如何隔离数据</h3>
   <div class="scroll"><table>
@@ -428,7 +422,7 @@ packages:
     </tbody>
   </table></div>
   <p>应用名原样存储，不做小写化、下划线折叠或其他转换。应用查询数据时应带上 <code>WHERE app = '...'</code> 条件。</p>
-  <div class="note danger"><p><strong>不要绕过 <code>app</code> 条件查询或修改数据。</strong>六张表的主键都包含应用维度；应用改名后会访问新的数据分区，旧值仍保留在原来的 <code>app</code> 值下，不会自动迁移。</p></div>
+  <div class="note danger"><p><strong>应用与用户条件不能省略。</strong>六张表使用独立雪花主键和统一审计字段，业务唯一索引包含 <code>app</code>。会话和附件由 <code>user_id</code> 隔离，缺失信息时使用 <code>-</code>。可信网关必须为 HTTP 和 WebSocket 注入 <code>X-User-Id</code>，并阻止公网直接访问应用端口。共用表的进程必须配置不同的雪花工作节点编号。</p></div>
   <h3>启动顺序</h3>
   <div class="flow">读环境变量 → 连上应用自己的 Nacos 命名空间
   ↓
@@ -478,7 +472,7 @@ ORDER BY session_id, seq;</code></pre>
       <tr><td><code>dsh_kv_unit</code></td><td>各存储单元的格式版本戳。版本不匹配会拒绝打开而非静默迁移</td></tr>
       <tr><td><code>dsh_kv_record</code></td><td>存储记录。当前使用者：会话投影缓存、工作区、消息反馈</td></tr>
       <tr><td><code>dsh_kv_global</code></td><td>各单元的全局单例槽</td></tr>
-      <tr><td><code>dsh_attachment_object</code></td><td>归一化后的图片二进制，按内容寻址。去重靠主键冲突，无需额外逻辑</td></tr>
+      <tr><td><code>dsh_attachment_object</code></td><td>归一化图片，按应用、用户和摘要的唯一索引去重</td></tr>
     </tbody>
   </table></div>
   <div class="note"><p><strong>模型请求用的派生图片变体不落库</strong>，留在容器本地临时目录。每个变体都是「引用 + 路由策略」的确定性函数，被替换的容器会重新生成完全相同的字节。判断原则：只有无法重算的东西才需要持久化。</p></div>

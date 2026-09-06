@@ -13,8 +13,6 @@ node /usr/local/bin/prepare-profile.mjs
 # process, so it writes the resolved value here and this shell sources it into
 # the environment the harness inherits.
 DSH_RESOLVED_ENV="${DSH_RESOLVED_ENV:-/run/dsh-resolved.env}"
-if [ -f "${DSH_RESOLVED_ENV}" ]; then
-  . "${DSH_RESOLVED_ENV}"
-fi
+. "${DSH_RESOLVED_ENV}"
 
 exec node "${DSH_BIN}" --profile "${DSH_PROFILE}" --no-open "$@"

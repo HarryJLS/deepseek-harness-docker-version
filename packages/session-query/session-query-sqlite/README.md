@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-session-query-sqlite` searches session history with a SQLite FTS5 index and returns ranked, cursor-paginated results grouped by session or within one session. Mount it together with `dsh-session-query` and you get full-text search plus the whole query surface — exact reads, filters, and traces — at once. Live sessions are indexed from memory and persisted sessions from a dedicated derived-index database, so results always reflect the newest state without touching the session-persistence store. Search is opt-in and off by default in shipped compositions: `openAt` decides whether the index opens at startup, at the first search, or never. Setup and usage come first; the implementation internals live in a collapsible developer section below.
 
+The disposable index records session ownership. User-scoped search applies its owner predicate before ranking and pagination, and cursor fingerprints include the requesting user. Index reconciliation is internal maintenance over the complete application corpus; it does not make other owners' results visible.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

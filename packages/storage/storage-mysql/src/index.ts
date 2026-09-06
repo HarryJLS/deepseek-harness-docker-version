@@ -12,7 +12,7 @@
  * already gives.
  *
  * Applications share the tables and are separated by the `app` column, which
- * leads every primary key. MySQL has no schema inside a database, so there is
+ * leads every logical unique index. MySQL has no schema inside a database, so there is
  * no namespace to give each application; the column is the separation, and
  * every statement below binds it.
  *
@@ -22,6 +22,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import mysql from 'mysql2/promise'
+import { currentUserId } from '@deepseek-ai/dsh-user-context'
 import {
   mysqlTable,
   mysqlConnectionSchema,
@@ -29,6 +30,13 @@ import {
   resolveMysqlPool,
   tablesPresent,
   toJsonText,
+  assertMysqlTable,
+  mysqlIdGenerator,
+  mysqlAuditValues,
+  MYSQL_AUDIT_DDL,
+  MYSQL_AUDIT_COLUMNS,
+  MYSQL_AUDIT_VALUES,
+  MYSQL_AUDIT_UPDATE,
 } from '@deepseek-ai/dsh-mysql-schema'
 import type { MysqlConnectionConfig } from '@deepseek-ai/dsh-mysql-schema'
 import { StorageError, UNIT_NAME_RE, storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
@@ -58,6 +66,7 @@ class MysqlKvUnit implements KvUnit {
     private readonly pool: mysql.Pool,
     private readonly app: string,
     private readonly descriptor: KvUnitDescriptor,
+    private readonly nextId: () => string,
   ) {}
 
   /** Refuse every operation once released, as the contract requires. */
@@ -88,7 +97,7 @@ class MysqlKvUnit implements KvUnit {
     // driver handed back would double-decode any record that is itself a JSON
     // string.
     const [records] = await this.pool.query<mysql.RowDataPacket[]>(
-      `SELECT tbl, key_name, value FROM \`${RECORD_TABLE}\` WHERE app = ? AND unit = ?`,
+      `SELECT tbl, key_name, value FROM \`${RECORD_TABLE}\` WHERE app = ? AND unit = ? AND is_deleted = 'N'`,
       [this.app, this.descriptor.name],
     )
     for (const row of records) {
@@ -100,7 +109,7 @@ class MysqlKvUnit implements KvUnit {
     }
     if (!this.descriptor.hasGlobal) return { tables, global: null }
     const [global] = await this.pool.query<mysql.RowDataPacket[]>(
-      `SELECT value FROM \`${GLOBAL_TABLE}\` WHERE app = ? AND unit = ?`,
+      `SELECT value FROM \`${GLOBAL_TABLE}\` WHERE app = ? AND unit = ? AND is_deleted = 'N'`,
       [this.app, this.descriptor.name],
     )
     const row = global[0]
@@ -112,10 +121,10 @@ class MysqlKvUnit implements KvUnit {
     this.assertTable(table)
     const json = toJsonText(value ?? null)
     await this.pool.query(
-      `INSERT INTO \`${RECORD_TABLE}\` (app, unit, tbl, key_name, value)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE value = ?`,
-      [this.app, this.descriptor.name, table, key, json, json],
+      `INSERT INTO \`${RECORD_TABLE}\` (${MYSQL_AUDIT_COLUMNS}, app, unit, tbl, key_name, value)
+       VALUES (${MYSQL_AUDIT_VALUES}, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE value = VALUES(value), ${MYSQL_AUDIT_UPDATE}`,
+      [...mysqlAuditValues(this.nextId), this.app, this.descriptor.name, table, key, json],
     )
   }
 
@@ -123,8 +132,9 @@ class MysqlKvUnit implements KvUnit {
     this.assertOpen()
     this.assertTable(table)
     await this.pool.query(
-      `DELETE FROM \`${RECORD_TABLE}\` WHERE app = ? AND unit = ? AND tbl = ? AND key_name = ?`,
-      [this.app, this.descriptor.name, table, key],
+      `UPDATE \`${RECORD_TABLE}\` SET is_deleted = 'Y', modifier = ?, gmt_modified = CURRENT_TIMESTAMP
+       WHERE app = ? AND unit = ? AND tbl = ? AND key_name = ? AND is_deleted = 'N'`,
+      [currentUserId(), this.app, this.descriptor.name, table, key],
     )
   }
 
@@ -138,10 +148,10 @@ class MysqlKvUnit implements KvUnit {
     }
     const json = toJsonText(value ?? null)
     await this.pool.query(
-      `INSERT INTO \`${GLOBAL_TABLE}\` (app, unit, value)
-       VALUES (?, ?, ?)
-       ON DUPLICATE KEY UPDATE value = ?`,
-      [this.app, this.descriptor.name, json, json],
+      `INSERT INTO \`${GLOBAL_TABLE}\` (${MYSQL_AUDIT_COLUMNS}, app, unit, value)
+       VALUES (${MYSQL_AUDIT_VALUES}, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE value = VALUES(value), ${MYSQL_AUDIT_UPDATE}`,
+      [...mysqlAuditValues(this.nextId), this.app, this.descriptor.name, json],
     )
   }
 
@@ -158,7 +168,11 @@ class MysqlBackend implements StorageBackend {
   private readonly open = new Set<string>()
   private closed = false
 
-  constructor(private readonly pool: mysql.Pool, private readonly app: string) {}
+  constructor(
+    private readonly pool: mysql.Pool,
+    private readonly app: string,
+    private readonly nextId: () => string,
+  ) {}
 
   readonly kv: KvFacet = {
     open: async (descriptor: KvUnitDescriptor): Promise<KvUnit> => {
@@ -181,16 +195,16 @@ class MysqlBackend implements StorageBackend {
       // is a no-op upsert followed by a read of whatever version now stands —
       // the row's own, whether this call or a concurrent one wrote it.
       await this.pool.query(
-        `INSERT INTO \`${UNIT_TABLE}\` (app, unit, version)
-         VALUES (?, ?, ?)
+        `INSERT INTO \`${UNIT_TABLE}\` (${MYSQL_AUDIT_COLUMNS}, app, unit, version)
+         VALUES (${MYSQL_AUDIT_VALUES}, ?, ?, ?)
          ON DUPLICATE KEY UPDATE unit = unit`,
-        [this.app, descriptor.name, descriptor.version],
+        [...mysqlAuditValues(this.nextId), this.app, descriptor.name, descriptor.version],
       )
       const [stamped] = await this.pool.query<mysql.RowDataPacket[]>(
-        `SELECT version FROM \`${UNIT_TABLE}\` WHERE app = ? AND unit = ?`,
+        `SELECT version FROM \`${UNIT_TABLE}\` WHERE app = ? AND unit = ? AND is_deleted = 'N'`,
         [this.app, descriptor.name],
       )
-      const version = stamped[0]?.version
+      const version: unknown = stamped[0]?.version
       if (version !== descriptor.version) {
         throw new StorageError(
           'version-mismatch',
@@ -199,7 +213,7 @@ class MysqlBackend implements StorageBackend {
         )
       }
       this.open.add(descriptor.name)
-      const unit = new MysqlKvUnit(this.pool, this.app, descriptor)
+      const unit = new MysqlKvUnit(this.pool, this.app, descriptor, this.nextId)
       return {
         loadAll: () => unit.loadAll(),
         putRecord: (table, key, value) => unit.putRecord(table, key, value),
@@ -232,33 +246,43 @@ class MysqlBackend implements StorageBackend {
  * @param pool - the connection pool to run DDL through.
  */
 async function migrate(pool: mysql.Pool): Promise<void> {
-  if (await tablesPresent(pool, [UNIT_TABLE, RECORD_TABLE, GLOBAL_TABLE])) return
+  if (await tablesPresent(pool, [UNIT_TABLE, RECORD_TABLE, GLOBAL_TABLE])) {
+    for (const table of [UNIT_TABLE, RECORD_TABLE, GLOBAL_TABLE]) await assertMysqlTable(pool, table)
+    return
+  }
   await pool.query(
     `CREATE TABLE IF NOT EXISTS \`${UNIT_TABLE}\` (
+       ${MYSQL_AUDIT_DDL},
        app     varchar(64)  NOT NULL,
        unit    varchar(128) NOT NULL,
        version int          NOT NULL,
-       PRIMARY KEY (app, unit)
-     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+       PRIMARY KEY (id),
+       UNIQUE KEY dsh_kv_unit_identity_uk (app, unit)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
   )
   await pool.query(
     `CREATE TABLE IF NOT EXISTS \`${RECORD_TABLE}\` (
+       ${MYSQL_AUDIT_DDL},
        app      varchar(64)  NOT NULL,
        unit     varchar(128) NOT NULL,
        tbl      varchar(128) NOT NULL,
        key_name varchar(255) NOT NULL,
        value    json         NOT NULL,
-       PRIMARY KEY (app, unit, tbl, key_name)
-     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+       PRIMARY KEY (id),
+       UNIQUE KEY dsh_kv_record_identity_uk (app, unit, tbl, key_name)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
   )
   await pool.query(
     `CREATE TABLE IF NOT EXISTS \`${GLOBAL_TABLE}\` (
+       ${MYSQL_AUDIT_DDL},
        app   varchar(64)  NOT NULL,
        unit  varchar(128) NOT NULL,
        value json         NOT NULL,
-       PRIMARY KEY (app, unit)
-     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+       PRIMARY KEY (id),
+       UNIQUE KEY dsh_kv_global_identity_uk (app, unit)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
   )
+  for (const table of [UNIT_TABLE, RECORD_TABLE, GLOBAL_TABLE]) await assertMysqlTable(pool, table)
 }
 
 /**
@@ -287,8 +311,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const pool = createPool(config)
   // Migration precedes registration: a consumer that resolves the backend must
   // never reach a medium whose tables do not exist yet.
-  await migrate(pool)
-  const backend = new MysqlBackend(pool, app)
+  try {
+    await migrate(pool)
+  } catch (error) {
+    await pool.end()
+    throw error
+  }
+  const backend = new MysqlBackend(pool, app, mysqlIdGenerator(config.snowflakeWorkerId ?? 0))
   ctx.effect(() => {
     const unregister = ctx.storage.backend.register(backendName, backend)
     return async () => {

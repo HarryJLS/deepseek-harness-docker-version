@@ -144,6 +144,7 @@ export function childSessionMeta(
   const agentPreset = parent.ctx.get('agentPresets')?.composedPreset(parent.ctx)
   return {
     ...parentHeader.cwd !== undefined ? { cwd: parentHeader.cwd } : {},
+    ...parentHeader.userId !== undefined ? { userId: parentHeader.userId } : {},
     ...agentPreset === undefined ? {} : { agentPreset },
     parentSession: parentHeader.id,
     // Navigation classification only; the descriptor remains the authority

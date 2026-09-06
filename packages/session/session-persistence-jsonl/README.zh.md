@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-session-persistence-jsonl` 把每个会话存为一份仅追加 JSONL 日志——默认以带校验和的 Zstandard 帧存储，禁用压缩时以换行分隔的原始文本行存储。它提供与任何持久化后端相同的逻辑 `SessionEvent` 流，因此选择它不会改变 agent loop、模型或回放的任何行为；压缩、打包与崩溃恢复都是存储内部细节。当消费方需要按会话的磁盘产物时选择它：`locate(meta)` 返回 transcript 路径，选择 `compression: 'none'` 后日志可作为纯文本按行读取。根目录是唯一必填配置；持久性、延迟实体化与中断轮次恢复都随后端提供。
 
+会话头行在写入与加载时保留可选的 `SessionHeader.userId` 归属元数据。没有归属信息时仍保持字段缺失，平台访问检查将其解释为共享的 `-` 所有者。
+
 ## 目录
 
 - [使用本包](#use-this-package)

@@ -37,6 +37,7 @@ export interface HeaderLine {
   version: number
   id: SessionId
   createdAt: number
+  userId?: NonNullable<SessionHeader['userId']>
   cwd?: string
   parentSession?: SessionId
   seedLength?: number
@@ -56,6 +57,7 @@ export function toHeaderLine(header: SessionHeader): HeaderLine {
     version: header.version,
     id: header.id,
     createdAt: header.createdAt,
+    ...header.userId !== undefined ? { userId: header.userId } : {},
     ...header.cwd !== undefined ? { cwd: header.cwd } : {},
     ...header.parentSession !== undefined ? { parentSession: header.parentSession } : {},
     ...header.seedLength !== undefined ? { seedLength: header.seedLength } : {},
@@ -78,6 +80,7 @@ export function fromHeaderLine(line: HeaderLine): SessionHeader {
     version: line.version,
     id: line.id,
     createdAt: line.createdAt,
+    ...line.userId !== undefined ? { userId: line.userId } : {},
     ...line.cwd !== undefined ? { cwd: line.cwd } : {},
     ...line.parentSession !== undefined ? { parentSession: line.parentSession } : {},
     ...line.seedLength !== undefined ? { seedLength: line.seedLength } : {},
@@ -98,6 +101,10 @@ function isHeaderLine(value: unknown): value is HeaderLine {
     && Number.isSafeInteger((value as { createdAt: number }).createdAt)
     && (value as { createdAt: number }).createdAt >= 0
     && !Object.is((value as { createdAt: number }).createdAt, -0)
+    && ((value as { userId?: unknown }).userId === undefined
+      || (typeof (value as { userId?: unknown }).userId === 'string'
+        && (value as { userId: string }).userId.length > 0
+        && (value as { userId: string }).userId.length <= 32))
     && typeof (value as { delegationDepth?: unknown }).delegationDepth === 'number'
     && Number.isSafeInteger((value as { delegationDepth: number }).delegationDepth)
     && (value as { delegationDepth: number }).delegationDepth >= 0

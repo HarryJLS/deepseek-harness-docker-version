@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { canAccessUser, requestUserId, userScopedIterable, withUser, type UserId } from '@deepseek-ai/dsh-user-context'
 import { Context, Service, symbols } from '@deepseek-ai/cordis'
 import type { ConnectionRpcHandler } from '@deepseek-ai/dsh-client-connection'
 import type { WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
@@ -94,6 +95,7 @@ interface RegisteredRemoteEventSource {
 }
 
 interface RemoteEventClient {
+  readonly userId: UserId | undefined
   readonly id: RemoteEventClientId
   readonly queue: RemoteEventQueue
   readonly deliveries: Map<RemoteEventId, PendingRemoteEvent>
@@ -221,7 +223,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
               rejectRemoteStreamUpgrade(socket, rejection)
               return
             }
-            mux.handleUpgrade(req, socket, head)
+            withUser(webCtx.connection.userId(req), () => { mux.handleUpgrade(req, socket, head) })
           },
         }
         const unregister = webCtx.webServer.registerUpgrade(route)
@@ -346,11 +348,11 @@ export class TypertGatewayService extends Service implements TypertGateway {
         { field: 'result' },
       )
     }
-    return cancellableStream(
+    return userScopedIterable(cancellableStream(
       source,
       prepared.endpoint,
       request.signal ?? NEVER_ABORTED_SIGNAL,
-    )
+    ))
   }
 
   private async dispatchRpc(
@@ -362,7 +364,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
       try {
         const result = parseRemoteEventResultPayload(payload)
         const client = this.remoteEventClients.get(result.clientId)
-        if (client === undefined) {
+        if (client === undefined || !canAccessUser(client.userId)) {
           throw new Error('typert gateway: Remote event result identifies no active event stream')
         }
         this.receiveRemoteEventResult(client, result)
@@ -417,6 +419,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
     let clientId = randomUUID() as RemoteEventClientId
     while (this.remoteEventClients.has(clientId)) clientId = randomUUID() as RemoteEventClientId
     const client: RemoteEventClient = {
+      userId: requestUserId(),
       id: clientId,
       queue: new RemoteEventQueue(),
       deliveries: new Map(),
@@ -455,7 +458,9 @@ export class TypertGatewayService extends Service implements TypertGateway {
       event: frame.event,
       args: frame.args,
     }
-    for (const client of this.remoteEventClients.values()) client.queue.push(wire)
+    for (const client of this.remoteEventClients.values()) {
+      if (frame.userId === undefined || client.userId === undefined || frame.userId === client.userId) client.queue.push(wire)
+    }
   }
 
   private startRemoteEvent(source: TypertRemoteEventInvocation): void {
@@ -523,6 +528,8 @@ export class TypertGatewayService extends Service implements TypertGateway {
   }
 
   private deliverRemoteEvent(pending: PendingRemoteEvent, client: RemoteEventClient): void {
+    if (pending.source.userId !== undefined && client.userId !== undefined
+      && pending.source.userId !== client.userId) return
     pending.deliveries.add(client)
     client.deliveries.set(pending.id, pending)
     client.queue.push(pending.frame)

@@ -14,6 +14,7 @@ CREATE TABLE sessions (
   origin           TEXT,
   delegation_depth INTEGER,
   agent_preset     TEXT,
+  user_id          TEXT,
   incarnation      TEXT NOT NULL,
   revision         INTEGER NOT NULL
 ) STRICT;

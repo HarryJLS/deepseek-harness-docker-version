@@ -633,6 +633,9 @@ importers:
       '@deepseek-ai/dsh-typert-protocol':
         specifier: workspace:^
         version: link:../../typert/protocol
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -676,6 +679,9 @@ importers:
       '@deepseek-ai/dsh-typert-protocol':
         specifier: workspace:^
         version: link:../../typert/protocol
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:^
@@ -743,6 +749,9 @@ importers:
 
   packages/api/session-controller:
     dependencies:
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -874,6 +883,12 @@ importers:
 
   packages/api/workspace-controller:
     dependencies:
+      '@deepseek-ai/dsh-session-query':
+        specifier: workspace:^
+        version: link:../../session-query/session-query
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -945,6 +960,9 @@ importers:
 
   packages/attachment/attachment-mysql:
     dependencies:
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -1704,6 +1722,9 @@ importers:
 
   packages/client/connection:
     dependencies:
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -4379,6 +4400,10 @@ importers:
         version: link:../../runtime-diagnostics/invariants
 
   packages/core/session:
+    dependencies:
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:^
@@ -6028,6 +6053,19 @@ importers:
         specifier: workspace:^
         version: link:../../runtime-diagnostics/invariants
 
+  packages/identity/user-context:
+    dependencies:
+      '@deepseek-ai/dsh-brand':
+        specifier: workspace:^
+        version: link:../../util/brand
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:^
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-invariants':
+        specifier: workspace:^
+        version: link:../../runtime-diagnostics/invariants
+
   packages/interaction/commands:
     dependencies:
       '@deepseek-ai/dsh-util-crypto':
@@ -7197,6 +7235,10 @@ importers:
         version: 18.3.1
 
   packages/session-query/session-query:
+    dependencies:
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:^
@@ -7231,6 +7273,9 @@ importers:
 
   packages/session-query/session-query-sqlite:
     dependencies:
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -7409,6 +7454,9 @@ importers:
 
   packages/session/session-persistence-mysql:
     dependencies:
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -8410,6 +8458,9 @@ importers:
 
   packages/storage/storage-mysql:
     dependencies:
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -9623,9 +9674,15 @@ importers:
 
   packages/util/mysql-schema:
     dependencies:
+      '@deepseek-ai/dsh-user-context':
+        specifier: workspace:^
+        version: link:../../identity/user-context
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
+      '@sapphire/snowflake':
+        specifier: ^3.5.5
+        version: 3.5.5
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:^
@@ -12980,6 +13037,10 @@ packages:
     resolution: {integrity: sha512-BfzEnDJOt9T8M989/lA37EcJgat01wLRnoi5dQf3QzOH7jzpqTAzdDbVfRljVr5r+jzKqpbHeyOfAaXxAd0PAA==}
     cpu: [x64]
     os: [win32]
+
+  '@sapphire/snowflake@3.5.5':
+    resolution: {integrity: sha512-xzvBr1Q1c4lCe7i6sRnrofxeO1QTP/LKQ6A6qy0iB4x5yfiSfARMEQEghojzTNALDTcv8En04qYNIco9/K9eZQ==}
+    engines: {node: '>=v14.0.0', npm: '>=7.0.0'}
 
   '@sec-ant/readable-stream@0.4.1':
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
@@ -18481,6 +18542,8 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.62.2':
     optional: true
+
+  '@sapphire/snowflake@3.5.5': {}
 
   '@sec-ant/readable-stream@0.4.1': {}
 

@@ -9,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-projection-cache'
 import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
 import { TypertRemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
+import { canAccessUser } from '@deepseek-ai/dsh-user-context'
 import { z } from 'zod'
 import {
   SESSION_SEARCH_RESULT_LIMIT,
@@ -142,6 +143,7 @@ export class ApiSessionList {
     const items: SessionSummary[] = []
     const cold: SessionHeader[] = []
     for (const record of records) {
+      if (!canAccessUser(record.header.userId)) continue
       const live = this.ctx.sessions.get(record.header.id)
       if (live !== undefined) {
         items.push(this.summaryFor(live))
@@ -238,7 +240,7 @@ export class ApiSessionList {
       const visible = await provider.listSessions(signal)
       signal.throwIfAborted()
       const visibleIds = new Set(visible
-        .filter(record => record.header.cwd !== undefined)
+        .filter(record => record.header.cwd !== undefined && canAccessUser(record.header.userId))
         .map(record => record.header.id))
       if (visibleIds.size === 0) return { items: [], hasMore: false }
       const authorized: SessionSearchItem[] = []

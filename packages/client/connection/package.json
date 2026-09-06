@@ -39,7 +39,8 @@
   "license": "MIT",
   "dependencies": {
     "@deepseek-ai/schemastery": "workspace:^",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@deepseek-ai/dsh-user-context": "workspace:^"
   },
   "files": [
     "lib/index.js",

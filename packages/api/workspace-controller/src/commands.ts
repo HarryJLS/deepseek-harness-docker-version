@@ -9,7 +9,9 @@ import {
   WorkspaceUnknownSessionError,
 } from '@deepseek-ai/dsh-workspace'
 import { TypertRemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
-import { workspaceView } from './feed.ts'
+import { userWorkspaceView, visibleWorkspaceSessions } from './feed.ts'
+import { requestUserId } from '@deepseek-ai/dsh-user-context'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {
   WorkspaceArchiveSessionRequest,
   WorkspaceArchiveValue,
@@ -41,10 +43,10 @@ export class WorkspaceCommands {
       try {
         const existing = await this.ctx.workspaceRegistry.resolveByPath(request.path)
         if (existing !== undefined) {
-          return { workspace: workspaceView(existing), created: false }
+          return { workspace: await userWorkspaceView(this.ctx, existing), created: false }
         }
         const workspace = await this.ctx.workspaceRegistry.create(request.path)
-        return { workspace: workspaceView(workspace), created: true }
+        return { workspace: await userWorkspaceView(this.ctx, workspace), created: true }
       } catch (error) {
         if (error instanceof TypertRemoteFailure) throw error
         throw failure(
@@ -83,7 +85,7 @@ export class WorkspaceCommands {
         }
         await workspace.setTitle(title)
       }
-      return { workspace: workspaceView(workspace) }
+      return { workspace: await userWorkspaceView(this.ctx, workspace) }
     })
   }
 
@@ -127,6 +129,8 @@ export class WorkspaceCommands {
    * @returns the updated Workspace projection.
    */
   async insertSessionBefore(request: WorkspaceInsertSessionBeforeRequest): Promise<WorkspaceValue> {
+    await this.assertSessionUser(request.sessionId)
+    if (request.beforeSessionId !== undefined) await this.assertSessionUser(request.beforeSessionId)
     const workspace = this.requireWorkspace(request.workspaceId)
     try {
       await workspace.insertSessionBefore(request.sessionId, request.beforeSessionId)
@@ -144,7 +148,7 @@ export class WorkspaceCommands {
         },
       )
     }
-    return { workspace: workspaceView(workspace) }
+    return { workspace: await userWorkspaceView(this.ctx, workspace) }
   }
 
   /**
@@ -153,13 +157,21 @@ export class WorkspaceCommands {
    * @returns the complete resulting archive set.
    */
   async archiveSession(request: WorkspaceArchiveSessionRequest): Promise<WorkspaceArchiveValue> {
+    await this.assertSessionUser(request.sessionId)
     try {
       await this.ctx.workspaceRegistry.archiveSession(request.sessionId)
     } catch (error) {
       if (!(error instanceof WorkspaceUnknownSessionError)) throw error
       throw failure('session-not-found', error.message, { sessionId: request.sessionId })
     }
-    return { archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds] }
+    return { archivedSessionIds: await visibleWorkspaceSessions(this.ctx, this.ctx.workspaceRegistry.archivedSessionIds) }
+  }
+
+  private async assertSessionUser(sessionId: SessionId): Promise<void> {
+    if (requestUserId() === undefined) return
+    if (!(await visibleWorkspaceSessions(this.ctx, [sessionId])).includes(sessionId)) {
+      throw failure('session-not-found', `session "${sessionId}" not found`, { sessionId })
+    }
   }
 
   private requireWorkspace(workspaceId: WorkspaceId): Workspace {

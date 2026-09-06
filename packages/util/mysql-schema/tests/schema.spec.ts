@@ -18,7 +18,11 @@ import {
   resolveMysqlPool,
   tablesPresent,
   toJsonText,
+  assertMysqlTable,
+  mysqlIdGenerator,
+  mysqlAuditValues,
 } from '../src/index.ts'
+import { parseUserId, withUser } from '@deepseek-ai/dsh-user-context'
 
 describe('mysqlTable', () => {
   it('prefixes every harness-owned table', () => {
@@ -60,7 +64,7 @@ describe('resolveMysqlApp', () => {
 describe('resolveMysqlPool', () => {
   it('lets a URI win over the discrete fields', () => {
     expect(resolveMysqlPool({ url: 'mysql://u:p@h:2881/db', host: 'ignored' }))
-      .toEqual({ uri: 'mysql://u:p@h:2881/db', connectionLimit: 10, supportBigNumbers: true })
+      .toEqual({ uri: 'mysql://u:p@h:2881/db', connectionLimit: 10, supportBigNumbers: true, bigNumberStrings: true })
   })
 
   it('applies the OceanBase MySQL-protocol defaults', () => {
@@ -71,6 +75,7 @@ describe('resolveMysqlPool', () => {
       user: 'root',
       connectionLimit: 10,
       supportBigNumbers: true,
+      bigNumberStrings: true,
     })
   })
 
@@ -131,6 +136,45 @@ describe('tablesPresent', () => {
     // answer must send the caller down the create path, not past it.
     await expect(tablesPresent({ query: vi.fn().mockResolvedValue([[], undefined]) }, ['a']))
       .resolves.toBe(false)
+  })
+})
+
+describe('audit rows', () => {
+  it('generates distinct monotonic bigint strings across same-worker consumers and clock rollback', () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_788_600_000_000)
+    try {
+      const left = mysqlIdGenerator(701)
+      const right = mysqlIdGenerator(701)
+      const other = mysqlIdGenerator(702)
+      const ids = Array.from({ length: 10000 }, (_, index) => index % 2 === 0 ? left() : right())
+      expect(new Set(ids).size).toBe(ids.length)
+      expect(ids.every(id => /^\d+$/u.test(id) && BigInt(id) > BigInt(Number.MAX_SAFE_INTEGER))).toBe(true)
+      expect(BigInt(other())).not.toBe(BigInt(ids[0]!))
+      clock.mockReturnValue(1_788_599_000_000)
+      expect(BigInt(left())).toBeGreaterThan(BigInt(ids.at(-1)!))
+    } finally { clock.mockRestore() }
+  })
+
+  it('rejects worker identifiers outside the ten-bit allocation', () => {
+    for (const value of [-1, 1024, 0.5, NaN]) expect(() => mysqlIdGenerator(value)).toThrow('snowflakeWorkerId')
+  })
+
+  it('records the request actor or an explicit durable owner', () => {
+    expect(mysqlAuditValues(() => '123')).toEqual(['123', '-', '-'])
+    expect(withUser(parseUserId('alice'), () => mysqlAuditValues(() => '124'))).toEqual(['124', 'alice', 'alice'])
+    expect(withUser(parseUserId('bob'), () => mysqlAuditValues(() => '125', parseUserId('alice'))))
+      .toEqual(['125', 'alice', 'alice'])
+  })
+
+  it('rejects old composite primary keys and missing audit columns', async () => {
+    const columns = ['id', 'is_deleted', 'creator', 'gmt_created', 'modifier', 'gmt_modified', 'user_id']
+      .map(name => ({ name, type: name === 'id' ? 'bigint' : 'varchar', key_type: name === 'id' ? 'PRI' : '' }))
+    await expect(assertMysqlTable({ query: vi.fn().mockResolvedValue([columns]) }, 'dsh_session', ['user_id']))
+      .resolves.toBeUndefined()
+    for (const invalid of [columns.slice(1), columns.slice(0, -1), columns.map(row => ({ ...row, key_type: 'PRI' })), columns.map(row => row.name === 'id' ? { ...row, type: 'varchar' } : row)]) {
+      await expect(assertMysqlTable({ query: vi.fn().mockResolvedValue([invalid]) }, 'dsh_session', ['user_id']))
+        .rejects.toThrow('unsupported layout')
+    }
   })
 })
 

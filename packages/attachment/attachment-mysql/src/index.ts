@@ -5,8 +5,8 @@
  * on: a message that references an attachment the store cannot produce is a
  * broken conversation, not a degraded one. A container with no writable volume
  * therefore keeps them in the database, content-addressed by the same
- * `sha256:` reference the session log records — which makes deduplication a
- * primary-key conflict rather than logic this module has to own.
+ * `sha256:` reference the session log records. A unique application/user/digest
+ * index provides deduplication independently of the Snowflake primary key.
  *
  * The derived model-request variants stay on the container's own filesystem on
  * purpose. A variant is a deterministic function of (reference, route policy),
@@ -33,7 +33,15 @@ import {
   resolveMysqlApp,
   resolveMysqlPool,
   tablesPresent,
+  assertMysqlTable,
+  mysqlIdGenerator,
+  mysqlAuditValues,
+  MYSQL_AUDIT_DDL,
+  MYSQL_AUDIT_COLUMNS,
+  MYSQL_AUDIT_VALUES,
+  MYSQL_AUDIT_UPDATE,
 } from '@deepseek-ai/dsh-mysql-schema'
+import { currentUserId } from '@deepseek-ai/dsh-user-context'
 import type { MysqlConnectionConfig } from '@deepseek-ai/dsh-mysql-schema'
 import type {
   ImageAttachmentLimits,
@@ -115,12 +123,14 @@ export class MysqlAttachmentStore extends AttachmentStore {
   private readonly normalizationPolicy: NormalizationPolicy
   private readonly pool: mysql.Pool
   private readonly app: string
+  private readonly nextId: () => string
   /** Container-local root for the deterministic request-variant cache. */
   private variantRoot = ''
 
   constructor(ctx: Context, public config: Config) {
     super(ctx)
     this.app = resolveMysqlApp(config)
+    this.nextId = mysqlIdGenerator(config.snowflakeWorkerId ?? 0)
     this.imageLimits = {
       maxImageBytes: config.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES,
       maxImagesPerMessage: config.maxImagesPerMessage ?? DEFAULT_MAX_IMAGES_PER_MESSAGE,
@@ -139,26 +149,29 @@ export class MysqlAttachmentStore extends AttachmentStore {
 
   /** Create the object table and the container-local variant cache root. */
   protected async* [Service.init](): AsyncGenerator<() => Promise<void> | void, void, void> {
+    yield async () => { await this.pool.end() }
     // A production role often holds no DDL rights, and `IF NOT EXISTS` does not
     // exempt a statement from the privilege check; a table already there means
     // there is nothing to create.
     if (!await tablesPresent(this.pool, [OBJECT_TABLE])) {
       await this.pool.query(
         `CREATE TABLE IF NOT EXISTS \`${OBJECT_TABLE}\` (
+           ${MYSQL_AUDIT_DDL},
            app        varchar(64)  NOT NULL,
+           user_id    varchar(32)  NOT NULL DEFAULT '-' COMMENT '所属用户',
            sha256     varchar(64)  NOT NULL,
            media_type varchar(64)  NOT NULL,
            bytes      int          NOT NULL,
            width      int          NOT NULL,
            height     int          NOT NULL,
            data       longblob     NOT NULL,
-           created_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-           PRIMARY KEY (app, sha256)
-         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+           PRIMARY KEY (id),
+           UNIQUE KEY dsh_attachment_object_identity_uk (app, user_id, sha256)
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
       )
     }
+    await assertMysqlTable(this.pool, OBJECT_TABLE, ['user_id'])
     this.variantRoot = await mkdtemp(join(tmpdir(), 'dsh-attachment-'))
-    yield async () => { await this.pool.end() }
   }
 
   /** Validate one image without persisting it, using the shared admission path. */
@@ -168,18 +181,18 @@ export class MysqlAttachmentStore extends AttachmentStore {
 
   /**
    * Normalize and durably commit one image. The reference is the digest of the
-   * normalized bytes, so an identical image committed twice conflicts on the
-   * primary key and the existing row stands.
+   * normalized bytes, so an identical image for the same user preserves the
+   * existing row's identity and creation provenance.
    */
   async saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef> {
     const prepared = await prepareImageFile(input, this.imageLimits, this.normalizationPolicy)
     const ref = prepared.ref
     await this.pool.query(
       `INSERT INTO \`${OBJECT_TABLE}\`
-         (app, sha256, media_type, bytes, width, height, data)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE sha256 = sha256`,
-      [this.app, digestOf(ref), ref.mediaType, ref.bytes, ref.width, ref.height,
+         (${MYSQL_AUDIT_COLUMNS}, app, user_id, sha256, media_type, bytes, width, height, data)
+       VALUES (${MYSQL_AUDIT_VALUES}, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE ${MYSQL_AUDIT_UPDATE}`,
+      [...mysqlAuditValues(this.nextId), this.app, currentUserId(), digestOf(ref), ref.mediaType, ref.bytes, ref.width, ref.height,
         Buffer.from(prepared.data)],
     )
     return ref
@@ -194,8 +207,8 @@ export class MysqlAttachmentStore extends AttachmentStore {
     signal?.throwIfAborted()
     const [rows] = await this.pool.query<mysql.RowDataPacket[]>(
       `SELECT media_type, bytes, width, height, data
-       FROM \`${OBJECT_TABLE}\` WHERE app = ? AND sha256 = ?`,
-      [this.app, digestOf(ref)],
+       FROM \`${OBJECT_TABLE}\` WHERE app = ? AND user_id = ? AND sha256 = ? AND is_deleted = 'N'`,
+      [this.app, currentUserId(), digestOf(ref)],
     )
     signal?.throwIfAborted()
     const row = rows[0] as {

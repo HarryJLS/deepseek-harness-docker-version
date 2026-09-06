@@ -5,7 +5,8 @@ import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-
 import type SessionPersistence from '@deepseek-ai/dsh-session-persistence'
 import type { SessionRecord } from './types.ts'
 import { SessionQueryError } from './config.ts'
-import { assertSessionHeadersCompatible } from './sources.ts'
+import { assertSessionHeadersCompatible, assertSessionUser } from './sources.ts'
+import { canAccessUser } from '@deepseek-ai/dsh-user-context'
 
 /** Detached source selected for one exact read. */
 export interface LogicalSession {
@@ -62,9 +63,11 @@ export class SessionCorpus {
     signal?.throwIfAborted()
     const records = new Map<SessionId, SessionRecord>()
     for (const header of persisted) {
+      if (!canAccessUser(header.userId)) continue
       records.set(header.id, { header: structuredClone(header), live: false, persisted: true })
     }
     for (const session of this._ctx.sessions.list()) {
+      if (!canAccessUser(session.header.userId)) continue
       const durable = records.get(session.id)
       if (durable !== undefined) assertSessionHeadersCompatible(session.header, durable.header)
       records.set(session.id, {
@@ -107,6 +110,7 @@ export class SessionCorpus {
       return snapshot
     }
     assertSessionHeadersCompatible(loaded.meta, listed)
+    assertSessionUser(loaded.meta)
     const snapshot = {
       header: structuredClone(loaded.meta),
       events: loaded.events.map(event => structuredClone(event)),
@@ -228,6 +232,7 @@ function projectSource<Value>(
 ): LogicalProjectionResult<Value> {
   try {
     signal?.throwIfAborted()
+    assertSessionUser(source.header)
     const value = project(source)
     signal?.throwIfAborted()
     return { sessionId, status: 'fulfilled', value }
@@ -254,7 +259,7 @@ async function listPersisted(
   signal?: AbortSignal,
 ): Promise<SessionHeader[]> {
   try {
-    return await persistence.list(signal)
+    return (await persistence.list(signal)).filter(header => canAccessUser(header.userId))
   } catch (error: unknown) {
     if (signal?.aborted) signal.throwIfAborted()
     throw new SessionQueryError(
@@ -290,6 +295,7 @@ async function inspectPersisted(
 }
 
 function snapshotLive(session: Session): LogicalSession {
+  assertSessionUser(session.header)
   return {
     header: structuredClone(session.header),
     events: session.events.map(event => structuredClone(event)),

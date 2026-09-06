@@ -20,6 +20,8 @@ export interface InvokeRemoteRequest {
 
 /** One Host Cordis notification forwarded unchanged to Client Remote subscribers. */
 export interface TypertRemoteEventFrame {
+  /** Target user for session notifications; absent for Host-wide configuration events. */
+  readonly userId?: import('@deepseek-ai/dsh-user-context/identity').UserId
   /** Original Host Cordis event name. */
   readonly event: string
   /** Original event argument list after the owner validates it for JSON transport. */
@@ -45,6 +47,8 @@ export type TypertRemoteEventOutcome =
  * a Client result or explicit delegation.
  */
 export interface TypertRemoteEventInvocation {
+  /** User owning the Agent whose Client continuation is requested. */
+  readonly userId?: import('@deepseek-ai/dsh-user-context/identity').UserId
   /** Original Host Cordis event name. */
   readonly event: string
   /** Sole request argument before the waterfall's `next()` callback. */

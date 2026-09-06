@@ -45,6 +45,11 @@ const NO_MODEL_EXPERIENCE_SECTION: Readonly<Record<string, string>> = {
 const SENTENCE_MODEL_EXPERIENCE: Readonly<Record<string, SentenceContract>> = {
   'packages/attachment/attachment': { kind: 'indirect', reason: 'The storage seam delegates model request rendering to provider adapters.' },
   'packages/attachment/attachment-local': { kind: 'indirect', reason: 'The local backend delegates model request rendering to provider adapters.' },
+  'packages/attachment/attachment-mysql': { kind: 'indirect', reason: 'The database backend returns image bytes; provider adapters own model request rendering.' },
+  'packages/bundle/docker': { kind: 'none', reason: 'Deployment composition delegates every model-facing contribution to its selected plugins.' },
+  'packages/identity/user-context': { kind: 'none', reason: 'Request ownership and audit actors are metadata, not model content.' },
+  'packages/storage/storage-mysql': { kind: 'none', reason: 'The database backend stores opaque application state and registers no model content.' },
+  'packages/util/mysql-schema': { kind: 'none', reason: 'SQL definitions, row identifiers, audit fields, and connection options add no model content.' },
   'packages/shell/shell': { kind: 'indirect', reason: 'The service interface delegates all model rendering to dsh-tool-bash.' },
   'packages/shell/shell-env': { kind: 'indirect', reason: 'The env service exposes managed DSH_* facts through the shell tools (dsh-tool-bash/dsh-tool-pwsh); it registers no prompt or schema of its own.' },
   'packages/shell/bash-local': { kind: 'indirect', reason: 'The executor backend delegates model rendering to dsh-tool-bash.' },

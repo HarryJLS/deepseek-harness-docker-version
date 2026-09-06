@@ -74,7 +74,8 @@
   "license": "MIT",
   "dependencies": {
     "@deepseek-ai/schemastery": "workspace:^",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@deepseek-ai/dsh-user-context": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
@@ -105,9 +106,15 @@
     "@deepseek-ai/dsh-util-workspace-path": "workspace:^"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-jobs": { "optional": true },
-    "@deepseek-ai/dsh-session-persistence": { "optional": true },
-    "@deepseek-ai/dsh-session-projection-cache": { "optional": true }
+    "@deepseek-ai/dsh-jobs": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session-persistence": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session-projection-cache": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",

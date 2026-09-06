@@ -25,7 +25,9 @@ import {
   apiSessionSubagentOwnershipError,
   hasApiSessionSubagentOwner,
   inspectApiSession,
+  assertApiSessionUser,
 } from './agent.ts'
+import { canAccessUser } from '@deepseek-ai/dsh-user-context'
 import type {
   SessionAttachmentRequest,
   SessionAttachmentValue,
@@ -245,6 +247,7 @@ export class SessionCommandController {
         seed: source.events.slice(0, cut),
         meta: {
           ...(source.header.cwd === undefined ? {} : { cwd: source.header.cwd }),
+          ...(source.header.userId === undefined ? {} : { userId: source.header.userId }),
           parentSession: source.header.id,
           seedLength: cut,
           ...(composition.agentPreset === undefined
@@ -391,6 +394,9 @@ export class SessionCommandController {
       )
     }
     const agent = this.ctx.agents.get(request.sessionId)
+    if (agent !== undefined && !canAccessUser(agent.session.header.userId)) {
+      reject('session-not-found', `session "${request.sessionId}" not found`, { sessionId: request.sessionId })
+    }
     if (agent !== undefined && hasApiSessionSubagentOwner(this.ctx, agent.session, agent)) {
       rejectFailure(apiSessionSubagentOwnershipError(request.sessionId))
     }
@@ -428,7 +434,7 @@ export class SessionCommandController {
    */
   cancel(request: SessionCancelRequest): SessionCancelValue {
     const agent = this.ctx.agents.get(request.sessionId)
-    if (agent === undefined) {
+    if (agent === undefined || !canAccessUser(agent.session.header.userId)) {
       reject(
         'session-not-found',
         `session "${request.sessionId}" not found (not attached)`,
@@ -449,6 +455,9 @@ export class SessionCommandController {
   }
 
   private rejectCreation(sessionId: SessionId, error: unknown): never {
+    if (error instanceof ApiSessionNotFound) {
+      reject('session-not-found', error.message, { sessionId })
+    }
     if (error instanceof ApiSessionPresetConflict) {
       reject('agent-preset-conflict', error.message, {
         sessionId: error.sessionId,
@@ -484,6 +493,7 @@ export class SessionCommandController {
   private async readSessionState(sessionId: SessionId): Promise<SessionReadState> {
     const attached = this.ctx.sessions.get(sessionId)
     if (attached !== undefined) {
+      assertApiSessionUser(attached.header)
       return { id: attached.id, header: attached.header, events: [...attached.events] }
     }
     const inspected = await inspectApiSession(this.ctx, sessionId)

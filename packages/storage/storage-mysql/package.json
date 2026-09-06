@@ -38,6 +38,7 @@
     "@deepseek-ai/dsh-storage": "workspace:^"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-user-context": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^",
     "mysql2": "^3.11.5"
   },

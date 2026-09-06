@@ -11,6 +11,8 @@ kind: "package-reference"
 
 为本应用选定的 Host Remote 能力提供双侧 BFF。Host 入口拥有转发事件名单并向 API Gateway 注册应用事件 source；Client 入口以运行时值形式导入生成的 `/remote` 产物，通过 `ctx.remote.$mount()` 挂载每项贡献，并重新导出对应的声明合并。Client 业务包依赖该外观，而不依赖 Gateway 实现或单独的 Remote 运行时入口。
 
+会话通知向 Gateway 携带持久化所有者作为投递目标；审批与用户问题瀑布从主体 Agent 的会话确定所有者。全局配置通知仍在应用范围内分发。用户目标属于 Host 路由元数据，不是额外的事件参数。
+
 ## 目录
 
 - [使用本包](#use-this-package)

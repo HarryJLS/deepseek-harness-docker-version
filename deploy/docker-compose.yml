@@ -84,7 +84,7 @@ services:
   dsh:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile
+      dockerfile: Dockerfile
       args:
         # The build context excludes .git; supply the commit the image is built
         # from so the client build metadata is honest.
@@ -95,12 +95,7 @@ services:
       nacos:
         condition: service_healthy
     environment:
-      # Names this application. It is written into the `app` column that leads
-      # every harness table's primary key, so several applications built on one
-      # image share one database, one set of `dsh_` tables, and one Nacos server
-      # without sharing a row. Changing it points the container at a different
-      # set of rows — the old ones are left untouched, not migrated.
-      DSH_APP_NAME: ${DSH_APP_NAME:-dsh}
+      # Database options and the application name come from the Nacos settings entry.
       DSH_NACOS_HOST: nacos
       DSH_NACOS_PORT: '8848'
       DSH_NACOS_GROUP: DEFAULT_GROUP
@@ -108,22 +103,14 @@ services:
       # settings, credentials, plugin roster, and the mirrored patch and agents
       # entries are all read from here; each application owns its own namespace.
       DSH_NACOS_NAMESPACE: order-svc
-      # Where the database is. The account it is reached with is NOT here: the
-      # entrypoint reads `deployment.database.user` and `.password` from the
-      # Nacos settings entry, so rotating the password is a Nacos edit and a
-      # restart rather than a redeploy, and the secret stays out of the compose
-      # file and out of `docker inspect`. A stack whose settings entry declares
-      # no account falls back to these variables, and then to the plugin
-      # defaults — which fail the connection loudly rather than serving.
-      DSH_MYSQL_HOST: oceanbase
-      DSH_MYSQL_PORT: '2881'
-      DSH_MYSQL_DB: dsh
       # Space- or comma-separated package specs installed from the registry at
       # start. Changing this list changes the deployment's plugins without
       # rebuilding the image.
       DSH_PLUGINS: ${DSH_PLUGINS:-}
     ports:
       - '3080:3080'
+    tmpfs:
+      - /run:mode=0700
 
 volumes:
   obdata:

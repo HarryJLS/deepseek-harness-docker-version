@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-session-query` gives code callers one service for retrieving session history: read a complete raw log, list and filter sessions, fold titles, read events with bounded context, trace session lineage and event relationships, and run full-text search. Live sessions take precedence over persisted ones, and every returned record is a detached clone, so results always describe one consistent moment. Exact reads, filters, and traces are built in; full-text search comes from a mounted backend such as `dsh-session-query-sqlite`. Use it directly from code when you need programmatic access to what the model saw. Setup and usage come first; the implementation internals live in a collapsible developer section below.
 
+User-scoped lists, point observations, traces, and projections enforce `SessionHeader.userId` for both live and persisted sources. Missing metadata belongs to `-`; another user's identity produces the ordinary not-found error. Trusted unscoped maintenance can inspect the complete application corpus.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

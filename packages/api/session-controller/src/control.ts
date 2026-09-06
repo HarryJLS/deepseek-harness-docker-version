@@ -1,6 +1,7 @@
 /** Live Session queue, jobs, and projection state with reconnect baselines. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { canAccessUser, requestUserId, type UserId } from '@deepseek-ai/dsh-user-context'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { JobSnapshot } from '@deepseek-ai/dsh-jobs'
 import type {
@@ -17,7 +18,7 @@ import type {
 
 /** Owns the Host-wide Session control stream. */
 export class SessionControlController {
-  private readonly streams = new Set<ControlQueue>()
+  private readonly streams = new Map<ControlQueue, UserId | undefined>()
 
   /** @param ctx - Host context carrying live Agent, projection, and jobs services. */
   constructor(private readonly ctx: Context) {
@@ -41,7 +42,7 @@ export class SessionControlController {
       if (jobs.length > 0) this.broadcast({ type: 'jobs', sessionId: session.id, jobs })
     })
     ctx.effect(() => () => {
-      for (const stream of this.streams) stream.end()
+      for (const stream of this.streams.keys()) stream.end()
       this.streams.clear()
     }, 'session-controller.control')
   }
@@ -54,7 +55,7 @@ export class SessionControlController {
   async *control(signal: AbortSignal): AsyncIterable<SessionControlFrame> {
     signal.throwIfAborted()
     const queue = new ControlQueue()
-    this.streams.add(queue)
+    this.streams.set(queue, requestUserId())
     try {
       yield { type: 'baseline', value: this.baseline() }
       yield* queue.iterate(signal)
@@ -65,7 +66,7 @@ export class SessionControlController {
   }
 
   private baseline(): SessionControlBaseline {
-    const sessions = this.ctx.sessions.list()
+    const sessions = this.ctx.sessions.list().filter(session => canAccessUser(session.header.userId))
     const queues = Object.create(null) as Record<SessionId, readonly SessionQueuedItem[]>
     const jobs = Object.create(null) as Record<SessionId, readonly SessionJob[]>
     for (const session of sessions) {
@@ -128,8 +129,12 @@ export class SessionControlController {
     return jobs === undefined ? [] : jobs.list(agent).map(jobView)
   }
 
-  private broadcast(frame: SessionControlFrame): void {
-    for (const stream of this.streams) stream.push(frame)
+  private broadcast(frame: Exclude<SessionControlFrame, { type: 'baseline' }>): void {
+    const session = this.ctx.sessions.get(frame.sessionId)
+    if (session === undefined) return
+    for (const [stream, userId] of this.streams) {
+      if (userId === undefined || canAccessUser(session.header.userId, userId)) stream.push(frame)
+    }
   }
 }
 

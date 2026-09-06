@@ -68,6 +68,8 @@ export const inject = ['webServer', 'credentials']
 
 /** Plugin config: the deployment's non-loopback serving authorities. */
 export interface ConnectionConfig {
+  /** Trusted proxy user header. Leave unset unless the proxy authenticates users and replaces client-supplied values. */
+  userIdHeader?: string
   /**
    * Authorities this deployment serves beyond loopback: exact `host:port`, or
    * port-less `host` matching any port. The /api trust fence refuses any
@@ -102,6 +104,7 @@ export interface ConnectionConfig {
 }
 
 export const Config: z<ConnectionConfig> = z.object({
+  userIdHeader: z.string(),
   trustedHosts: z.array(String).default([]),
   allowAnyHost: z.boolean().default(false),
   requireAuth: z.boolean().default(true),
@@ -122,6 +125,10 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
   const access = {
     allowAnyHost: config?.allowAnyHost ?? false,
     requireAuth: config?.requireAuth ?? true,
+    ...(config?.userIdHeader === undefined ? {} : { userIdHeader: config.userIdHeader.toLowerCase() }),
+  }
+  if (access.userIdHeader !== undefined && !/^[a-z0-9-]+$/u.test(access.userIdHeader)) {
+    throw new Error('client-connection userIdHeader must be a nonempty HTTP header name')
   }
   const cookieMaxAgeDays = config?.cookieMaxAgeDays ?? 30
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES

@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-session` 提供仅追加的会话日志，记录 agent（智能体）的完整交互历史——每个模型可见事实都流经的单一真源。LLM（大语言模型）消息历史由日志*派生*（`deriveMessages()`），从不另行存储，因此回放就是对同一批事件重新派生，压缩（compaction）也可以遮蔽较旧的表层条目而不删除历史。该包还提供内存存储（`ctx.sessions`）、插件通过声明合并扩展的类型化 `SessionEvent` 词汇，以及为产生消息的事件排序的 surface 层。持久化刻意是独立关注点：后端订阅 `session/event` 并在 `session/flush` 时刷新。作为任何 agent 会话的基础时请选择本包；它本身不运行模型调用。
 
+`SessionHeader.userId` 记录可选的平台用户归属。没有归属信息时属于 `-`；普通分叉保留父会话的用户 ID。该元数据不增加模型可见事件。[用户标识](../../identity/user-context/README.zh.md) 负责请求作用域与校验。
+
 ## 目录
 
 - [使用本包](#use-this-package)

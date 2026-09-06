@@ -59,6 +59,9 @@
     },
     {
       "path": "../../typert/protocol"
+    },
+    {
+      "path": "../../identity/user-context"
     }
   ]
 }

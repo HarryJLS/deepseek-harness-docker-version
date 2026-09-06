@@ -15,9 +15,8 @@ export const name = 'mysql-schema-invariant'
 export const inject = ['invariants']
 
 /**
- * No runtime invariant: this package is pure resolution and serialization
- * helpers plus one `information_schema` read, whose answer is a property of the
- * live database its consumers prove against, not an in-process relation.
+ * No runtime invariant: these helpers expose no Cordis event stream; providers
+ * verify schema and row ownership against the database they operate on.
  */
 const install: InvariantInstaller = () => {}
 

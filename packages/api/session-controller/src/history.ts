@@ -1,6 +1,7 @@
 /** Cold Session history pagination and live-event source. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { canAccessUser, requestUserId } from '@deepseek-ai/dsh-user-context'
 import { isAppendSurfaceEvent } from '@deepseek-ai/dsh-session'
 import { isChunkRow, packChunkRuns, type ChunkRow } from '@deepseek-ai/dsh-session/chunk-rows'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
@@ -88,6 +89,7 @@ export class SessionHistoryController {
     validateFollowRequest(request)
     const { address } = request
     const target = addressId(address)
+    const userId = requestUserId()
     const buffered: SessionEvent[] = []
     let snapshotCursor: number | undefined
     let wake: (() => void) | undefined
@@ -103,12 +105,12 @@ export class SessionHistoryController {
     }
     this.closeFollowers.add(close)
     const disposeEvent = this.ctx.on('session/event', (session, event) => {
-      if (session.id !== target) return
+      if (session.id !== target || (userId !== undefined && !canAccessUser(session.header.userId, userId))) return
       buffered.push(event)
       notify()
     }, { global: true })
     const disposeCreated = this.ctx.on('session/created', (session) => {
-      if (session.id !== target) return
+      if (session.id !== target || (userId !== undefined && !canAccessUser(session.header.userId, userId))) return
       // Constructor seed events have no session/event notification. Normally
       // only the end-seed suffix is new; if persistence advanced after the
       // opening observation, replay everything beyond that snapshot cursor.

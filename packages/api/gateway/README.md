@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 Two-sided Typert RPC endpoint for Host and Client Cordis environments. The Host entry provides `ctx.typertGateway`, while `@deepseek-ai/dsh-api-gateway/client` provides `ctx.remote`; both consume the same generated `InvocationDescriptor` contract and leave business selection to API Remotes. Connection carries unary request correlation, trust, and response envelopes, while Gateway owns multiplexed Remote streams.
 
+WebSocket logical streams retain the user admitted on the upgrade request through asynchronous dispatch and iteration. Session notifications and interactive event continuations are delivered only to matching user streams, and results cannot address another user's Client registration. [Connection](../../client/connection/README.md) owns trusted-header admission.
+
 ## Table of Contents
 
 - [Host service: `TypertGatewayService` (ctx key: `typertGateway`)](#host-service-typertgatewayservice-ctx-key-typertgateway)

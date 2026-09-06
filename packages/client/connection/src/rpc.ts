@@ -185,6 +185,12 @@ export interface HostConnectionRpc {
 
 /** Host `ctx.connection` shape consumed by transport-independent adapters. */
 export interface HostConnectionHandle {
+  /**
+   * Read the trusted platform identity configured for this deployment.
+   * @param request - authenticated request carrying the platform user header.
+   * @returns the validated user identifier, or `-` when no identity is supplied.
+   */
+  userId(request: ConnectionTrustRequest): import('@deepseek-ai/dsh-user-context/identity').UserId
   /** Generic RPC channel registry. */
   readonly rpc: HostConnectionRpc
   /** Exact Fetch routes for streaming or browser-native responses. */

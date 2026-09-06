@@ -1,6 +1,9 @@
 /** Reconnect-safe Workspace baseline and increment producer. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-session-query'
+import { requestUserId } from '@deepseek-ai/dsh-user-context'
 import type { DomainChanged } from '@deepseek-ai/dsh-storage-domain'
 import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
 import {
@@ -28,6 +31,30 @@ export function workspaceView(workspace: Workspace): WorkspaceView {
     createdAt: workspace.createdAt,
     updatedAt: workspace.updatedAt,
   }
+}
+
+/**
+ * Remove session identities outside the current user's visible corpus.
+ * @param ctx - context carrying the session query service.
+ * @param ids - workspace or archive session identities.
+ * @returns only identities the requesting user may observe.
+ */
+export async function visibleWorkspaceSessions(ctx: Context, ids: readonly SessionId[]): Promise<SessionId[]> {
+  if (requestUserId() === undefined) return [...ids]
+  const query = ctx.get('sessionQuery')
+  if (query === undefined) throw new Error('workspace user isolation requires sessionQuery')
+  const visible = new Set((await query.listSessions()).map(record => record.header.id))
+  return ids.filter(id => visible.has(id))
+}
+
+/**
+ * Project a workspace without revealing another user's session identities.
+ * @param ctx - context carrying the session query service.
+ * @param workspace - authoritative workspace entity.
+ * @returns its user-filtered remote projection.
+ */
+export async function userWorkspaceView(ctx: Context, workspace: Workspace): Promise<WorkspaceView> {
+  return { ...workspaceView(workspace), sessionIds: await visibleWorkspaceSessions(ctx, workspace.sessionIds) }
 }
 
 function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceView {
@@ -83,8 +110,26 @@ export class WorkspaceFeed {
     const follower = new WorkspaceFollower()
     this.followers.add(follower)
     try {
-      yield { type: 'baseline', value: this.baseline() }
-      yield* follower.read(signal)
+      const baseline = this.baseline()
+      yield {
+        type: 'baseline',
+        value: {
+          items: await Promise.all(baseline.items.map(async item => ({
+            ...item, sessionIds: await visibleWorkspaceSessions(this.ctx, item.sessionIds),
+          }))),
+          archivedSessionIds: await visibleWorkspaceSessions(this.ctx, baseline.archivedSessionIds),
+        },
+      }
+      for await (const frame of follower.read(signal)) {
+        if (frame.type === 'upsert') {
+          const sessionIds = await visibleWorkspaceSessions(this.ctx, frame.workspace.sessionIds)
+          yield { ...frame, workspace: { ...frame.workspace, sessionIds } }
+        } else if (frame.type === 'archived') {
+          yield { ...frame, archivedSessionIds: await visibleWorkspaceSessions(this.ctx, frame.archivedSessionIds) }
+        } else {
+          yield frame
+        }
+      }
     } finally {
       this.followers.delete(follower)
       follower.close()

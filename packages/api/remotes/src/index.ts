@@ -10,7 +10,8 @@ import type {
 } from '@deepseek-ai/dsh-api-gateway'
 import { carrierKeyOf } from '@deepseek-ai/dsh-scope'
 import { isJsonValue } from '@deepseek-ai/dsh-session'
-import type { JsonValue } from '@deepseek-ai/dsh-session'
+import type { JsonValue, Session } from '@deepseek-ai/dsh-session'
+import { currentUserId, DEFAULT_USER_ID } from '@deepseek-ai/dsh-user-context'
 import { API_REMOTE_FORWARDED_EVENTS } from './remote-events.ts'
 
 // The owner packages' client-safe `./types` exports carry the cordis `Events`
@@ -48,7 +49,14 @@ function remoteEventSource(ctx: Context): TypertRemoteEventSource {
     const disposers = API_REMOTE_FORWARDED_EVENTS.map(({ event, mode }) => {
       if (mode === 'emit') {
         return ctx.on(event as never, ((...args: unknown[]) => {
-          queue.push({ event, args: assertJsonArgs(event, args) })
+          queue.push({
+            event,
+            args: assertJsonArgs(event, args),
+            ...(event.startsWith('api-session/') ? { userId: currentUserId() } : {}),
+            ...(event === 'agent-preset/selected' ? {
+              userId: ctx.get('sessions')?.get(args[0] as Session['id'])?.header.userId ?? DEFAULT_USER_ID,
+            } : {}),
+          })
         }) as never)
       }
       return ctx.on(event as never, (function (
@@ -138,6 +146,7 @@ function forwardWaterfall(
 ): Promise<unknown> {
   const settled = Promise.withResolvers<unknown>()
   const dispatch: TypertRemoteEventInvocation = {
+    userId: (context.subject as { readonly session: Session }).session.header.userId ?? DEFAULT_USER_ID,
     event,
     request,
     context,

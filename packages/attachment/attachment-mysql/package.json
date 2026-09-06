@@ -40,7 +40,8 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "workspace:^",
-    "mysql2": "^3.11.5"
+    "mysql2": "^3.11.5",
+    "@deepseek-ai/dsh-user-context": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",

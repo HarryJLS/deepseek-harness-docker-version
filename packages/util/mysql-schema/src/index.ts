@@ -1,40 +1,23 @@
 /**
- * Shared vocabulary for the harness MySQL-protocol plugins (OceanBase in MySQL
- * mode, and MySQL itself).
- *
- * Two things differ from the PostgreSQL packages this replaces, and both come
- * from the same fact: in MySQL a schema IS a database, so there is no
- * lightweight namespace to give each application inside one database.
- *
- * 1. **Applications are separated by a column, not by a schema.** Every table
- *    carries `app` as the leading primary-key column, so several applications
- *    write one set of tables in one database without overwriting each other,
- *    and an operator reads one application's rows with an ordinary `WHERE`.
- *    The name is stored verbatim rather than folded into an identifier — it is
- *    a value now, so `order-svc` and `Order Service` stay distinct instead of
- *    both collapsing onto `order_svc`.
- * 2. **Table names are globally prefixed `dsh_`.** One database is often shared
- *    with tables the harness does not own, and the prefix is what keeps
- *    `session` or `kv_record` from colliding with them.
- *
- * A production role rarely holds DDL rights, so every plugin looks before it
- * leaps with {@link tablesPresent} and only issues its creates when a table is
- * genuinely absent. `deploy/schema-mysql.sql` is the statement set a DBA runs
- * for a database the application may not provision itself.
- *
- * The connection is accepted structurally so this package stays free of a
- * driver dependency; the caller constructs the pool.
+ * Shared OceanBase/MySQL connection options, table naming, audit fields, and
+ * Snowflake identifiers. Applications share tables through logical unique
+ * indexes; numeric row primary keys remain independent of application ids.
+ * Providers own their pools and use schema probes before issuing DDL.
  *
  * @module @deepseek-ai/dsh-mysql-schema
  */
 
 import z from '@deepseek-ai/schemastery'
 
+export {
+  MYSQL_AUDIT_DDL, MYSQL_AUDIT_COLUMNS, MYSQL_AUDIT_VALUES, MYSQL_AUDIT_UPDATE,
+  mysqlAuditValues, mysqlIdGenerator,
+} from './audit.ts'
+
 /**
  * The one method this package needs from a `mysql2/promise` pool or connection.
- * The parameter list is narrowed to strings because {@link tablesPresent} is
- * the only caller and binds only table names; a wider element type would not
- * be assignable from the driver's own overloads.
+ * Schema probes bind table names only; the structural signature remains
+ * assignable from the driver's query overloads.
  */
 export interface MysqlQueryable {
   query(sql: string, values?: string[]): Promise<unknown>
@@ -136,7 +119,33 @@ export async function tablesPresent(
      WHERE table_schema = DATABASE() AND table_name IN (${placeholders})`,
     [...tables],
   ) as [{ present?: number | string }[], unknown]
-  return Number(result[0]?.[0]?.present ?? -1) === tables.length
+  return Number(result[0][0]?.present ?? -1) === tables.length
+}
+
+/**
+ * Reject a provisioned table without audit fields or a Snowflake primary key.
+ * @param pool - database query connection.
+ * @param table - physical table name.
+ * @param fields - additional columns required by the owning provider.
+ * @throws when the operator must provision the current DDL before starting.
+ */
+export async function assertMysqlTable(
+  pool: MysqlQueryable,
+  table: string,
+  fields: readonly string[] = [],
+): Promise<void> {
+  const [rows] = await pool.query(
+    `SELECT COLUMN_NAME AS name, DATA_TYPE AS type, COLUMN_KEY AS key_type
+     FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?`,
+    [table],
+  ) as [{ name: string; type: string; key_type: string }[], unknown]
+  const columns = new Map(rows.map(row => [row.name, row]))
+  const required = ['id', 'is_deleted', 'creator', 'gmt_created', 'modifier', 'gmt_modified', ...fields]
+  const primary = rows.filter(row => row.key_type === 'PRI')
+  if (required.some(field => !columns.has(field))
+    || primary.length !== 1 || primary[0]?.name !== 'id' || columns.get('id')?.type !== 'bigint') {
+    throw new Error(`mysql table ${table} has an unsupported layout; provision deploy/schema-mysql.sql before starting`)
+  }
 }
 
 /**
@@ -164,6 +173,8 @@ export interface MysqlConnectionConfig {
   app?: string
   /** Maximum pooled connections. Default: 10. */
   poolSize?: number
+  /** Unique Snowflake replica number, 0..1023. Default: 0 for a single replica. */
+  snowflakeWorkerId?: number
 }
 
 /**
@@ -180,6 +191,8 @@ export interface MysqlPoolOptions {
   connectionLimit: number
   /** `bigint` revisions must survive the driver rather than lose precision. */
   supportBigNumbers: boolean
+  /** Always return BIGINT as strings, including Snowflake primary keys. */
+  bigNumberStrings: boolean
 }
 
 /** Defaults applied when a field is omitted; stated once, never inline. */
@@ -199,7 +212,7 @@ const DEFAULTS = {
  */
 export function resolveMysqlPool(config: MysqlConnectionConfig): MysqlPoolOptions {
   const connectionLimit = config.poolSize ?? DEFAULTS.poolSize
-  const shared = { connectionLimit, supportBigNumbers: true }
+  const shared = { connectionLimit, supportBigNumbers: true, bigNumberStrings: true }
   if (config.url !== undefined) return { uri: config.url, ...shared }
   return {
     host: config.host ?? DEFAULTS.host,
@@ -229,7 +242,7 @@ export function resolveMysqlDatabase(config: MysqlConnectionConfig): string {
  * accepted fields, defaults, and secret marking identical.
  */
 export const mysqlConnectionSchema = {
-  url: z.string(),
+  url: z.string().role('secret'),
   host: z.string().default(DEFAULTS.host),
   port: z.natural().default(DEFAULTS.port),
   database: z.string().default(DEFAULTS.database),
@@ -237,4 +250,5 @@ export const mysqlConnectionSchema = {
   password: z.string().role('secret'),
   app: z.string().default(DEFAULTS.app),
   poolSize: z.natural().min(1).default(DEFAULTS.poolSize),
+  snowflakeWorkerId: z.natural().max(1023).default(0),
 }

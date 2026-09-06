@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import { meta, oneTurnLog, appendLog } from './contract.ts'
 
 /**
@@ -339,6 +339,31 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
 
         const loaded = await ctx.sessionPersistence.load(SessionId('forked-child'))
         expect(loaded.meta.seedLength).toBe(3)
+      } finally {
+        await fiber.dispose()
+        await fix.cleanup()
+      }
+    })
+
+    it('round-trips the platform owner through persistence', async () => {
+      const fix = await makeFixture()
+      const { ctx, fiber } = await freshCtx(fix)
+      try {
+        let session!: Session
+        const userId = 'fixture-owner' as NonNullable<SessionHeader['userId']>
+        const sessionFiber = await ctx.plugin(Object.assign((inner: Context) => {
+          session = inner.sessions.create(SessionId('owned-session'), { meta: { cwd: WORK, userId } })
+        }, { inject: ['sessions'] }))
+        send(session, oneTurnLog())
+        await ctx.sessions.flush(session)
+        await sessionFiber.dispose()
+        const loaded = await ctx.sessionPersistence.load(SessionId('owned-session'))
+        expect({ id: loaded.meta.id, userId: loaded.meta.userId }).toMatchInlineSnapshot(`
+          {
+            "id": "owned-session",
+            "userId": "fixture-owner",
+          }
+        `)
       } finally {
         await fiber.dispose()
         await fix.cleanup()

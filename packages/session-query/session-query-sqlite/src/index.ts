@@ -5,6 +5,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto'
+import { canAccessUser, parseUserId, requestUserId, withUser } from '@deepseek-ai/dsh-user-context'
 import type { DatabaseSync } from 'node:sqlite'
 import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -161,6 +162,7 @@ interface IndexedLiveRow {
 }
 
 interface SessionHeaderRow {
+  user_id: string | null
   session_id: string
   version: number
   created_at: number
@@ -262,10 +264,10 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     const signal = exec?.signal
     return this._serialized(signal, async () => {
       await this._ensureReady(signal)
-      const persistenceBinding = await this._reconcile(signal)
+      const persistenceBinding = await withUser(undefined, () => this._reconcile(signal))
       assertNotAborted(signal)
       const generation = String(this._globalGeneration)
-      const fingerprint = requestFingerprint(normalized)
+      const fingerprint = `${requestUserId() ?? ''}:${requestFingerprint(normalized)}`
       const offset = normalized.cursor === undefined
         ? 0
         : decodeCursor(normalized.cursor, this._instance, 'sessions', fingerprint, generation)
@@ -290,10 +292,13 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     const signal = exec?.signal
     return this._serialized(signal, async () => {
       await this._ensureReady(signal)
-      const persistenceBinding = await this._reconcile(signal)
+      const persistenceBinding = await withUser(undefined, () => this._reconcile(signal))
       assertNotAborted(signal)
       const target = this._targetObservation(normalized.sessionId, persistenceBinding)
-      const fingerprint = requestFingerprint(normalized)
+      if (!canAccessUser(target.header.userId)) {
+        throw new SessionQueryError(`session "${normalized.sessionId}" not found`, 'SESSION_QUERY_SESSION_NOT_FOUND')
+      }
+      const fingerprint = `${requestUserId() ?? ''}:${requestFingerprint(normalized)}`
       const offset = normalized.cursor === undefined
         ? 0
         : decodeCursor(normalized.cursor, this._instance, 'events', fingerprint, target.generation)
@@ -574,8 +579,8 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     const db = this._requireDb()
     db.prepare(`
       INSERT INTO persisted_sessions
-        (id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, revision, generation)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, user_id, revision, generation)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       ...headerBindings(entry.header),
       revision,
@@ -604,8 +609,8 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     const db = this._requireDb()
     db.prepare(`
       INSERT INTO temp.live_sessions
-        (id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, fingerprint, persisted, generation)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, user_id, fingerprint, persisted, generation)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       ...headerBindings(entry.header),
       entry.fingerprint,
@@ -638,12 +643,14 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     const selected = selectedDocumentsSql()
     const sessionWhere = buildSessionWhere(request.sessionFilters)
     const eventWhere = buildEventWhere(request.eventFilters)
-    assertFts5OuterPredicateCount(sessionWhere.predicateCount + eventWhere.predicateCount)
-    const where = [sessionWhere.sql, eventWhere.sql].filter(Boolean).join(' AND ')
+    const userId = requestUserId()
+    assertFts5OuterPredicateCount(sessionWhere.predicateCount + eventWhere.predicateCount + (userId === undefined ? 0 : 1))
+    const where = [sessionWhere.sql, eventWhere.sql, userId === undefined ? '' : "COALESCE(user_id, '-') = ?"].filter(Boolean).join(' AND ')
     const bindings = [
       ...selectedDocumentsParams(request.query, persistenceBinding.service !== undefined),
       ...sessionWhere.params,
       ...eventWhere.params,
+      ...(userId === undefined ? [] : [userId]),
       request.limit + 1,
       offset,
     ]
@@ -702,7 +709,7 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     const db = this._requireDb()
     const live = db.prepare(
       `SELECT
-        id AS session_id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, generation
+        id AS session_id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, user_id, generation
       FROM temp.live_sessions
       WHERE id = ?`,
     ).get(sessionId) as (SessionHeaderRow & { generation: number }) | undefined
@@ -712,7 +719,7 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     if (persistenceBinding.service !== undefined) {
       const persisted = db.prepare(
         `SELECT
-          id AS session_id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, generation
+          id AS session_id, version, created_at, cwd, parent_session, seed_length, delegation_depth, agent_preset, user_id, generation
         FROM persisted_sessions
         WHERE id = ?`,
       ).get(sessionId) as (SessionHeaderRow & { generation: number }) | undefined
@@ -776,6 +783,7 @@ function headerBindings(header: SessionHeader): (string | number | null)[] {
     header.seedLength ?? null,
     header.delegationDepth ?? null,
     header.agentPreset ?? null,
+    header.userId ?? null,
   ]
 }
 
@@ -791,6 +799,7 @@ function selectedDocumentsSql(): { sql: string } {
         ps.seed_length AS seed_length,
         ps.delegation_depth AS delegation_depth,
         ps.agent_preset AS agent_preset,
+        ps.user_id AS user_id,
         0 AS live,
         1 AS persisted,
         CAST(pd.seq AS INTEGER) AS seq,
@@ -814,6 +823,7 @@ function selectedDocumentsSql(): { sql: string } {
         ls.seed_length AS seed_length,
         ls.delegation_depth AS delegation_depth,
         ls.agent_preset AS agent_preset,
+        ls.user_id AS user_id,
         1 AS live,
         CASE WHEN ? = 1 THEN ls.persisted ELSE 0 END AS persisted,
         CAST(ld.seq AS INTEGER) AS seq,
@@ -923,6 +933,7 @@ function sameHeader(a: SessionHeader, b: SessionHeader): boolean {
     && a.seedLength === b.seedLength
     && (a.delegationDepth ?? 0) === (b.delegationDepth ?? 0)
     && a.agentPreset === b.agentPreset
+    && a.userId === b.userId
 }
 
 function rowHeader(row: SessionHeaderRow): SessionHeader {
@@ -935,6 +946,7 @@ function rowHeader(row: SessionHeaderRow): SessionHeader {
     ...row.seed_length === null ? {} : { seedLength: row.seed_length },
     ...row.delegation_depth === null ? {} : { delegationDepth: row.delegation_depth },
     ...row.agent_preset === null ? {} : { agentPreset: row.agent_preset },
+    ...row.user_id === null ? {} : { userId: parseUserId(row.user_id) },
   }
 }
 

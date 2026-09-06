@@ -28,7 +28,7 @@ interface PatchRow {
   id?: string
   name?: string
   disabled?: boolean
-  insert?: { id: string; name: string; config?: Record<string, unknown> }[]
+  insert?: { id: string; name: string; config?: Record<string, unknown> | string }[]
 }
 
 const patch = parse(
@@ -91,15 +91,16 @@ describe('network exposure', () => {
     // reached through a published port needs both opened or /api answers 403
     // and the shell answers 401.
     const connection = patch.find(row => row.id === 'connection') as
-      { config?: { allowAnyHost?: boolean; requireAuth?: boolean } } | undefined
+      { config?: { allowAnyHost?: boolean; requireAuth?: boolean; userIdHeader?: string } } | undefined
     expect(connection?.config?.allowAnyHost).toBe(true)
     expect(connection?.config?.requireAuth).toBe(false)
+    expect(connection?.config?.userIdHeader).toBe('x-user-id')
   })
 })
 
 describe('application scoping', () => {
   /** Every inserted row that owns tables in the database. */
-  const databaseRows = inserted.filter(row => row.name?.endsWith('-mysql') === true)
+  const databaseRows = inserted.filter(row => row.name.endsWith('-mysql'))
 
   it('scopes every database row by the application name', () => {
     // Half-scoping is the quiet failure: one plugin writing the app name into
@@ -108,8 +109,10 @@ describe('application scoping', () => {
     // session cannot find its own rows.
     expect(databaseRows.length).toBe(3)
     for (const row of databaseRows) {
-      expect(row.config?.app, `${row.id} is not scoped by DSH_APP_NAME`)
-        .toContain('DSH_APP_NAME')
+      expect(row.config).toBeTypeOf('string')
+      expect(row.config, `${row.id} is not scoped by DSH_APP_NAME`).toContain('app: process.env.DSH_APP_NAME')
+      expect(row.config).toContain('JSON.parse(process.env.DSH_DATABASE_SECRET)')
+      expect(row.config).not.toContain('DSH_MYSQL_')
     }
   })
 
@@ -118,9 +121,10 @@ describe('application scoping', () => {
     // one image must not make each deployment invent its own entry names, and
     // an application-prefixed data id would do exactly that. The database is
     // the backend applications share, so it is the only one scoped above.
-    const nacosRows = inserted.filter(row => row.name?.endsWith('-nacos') === true)
+    const nacosRows = inserted.filter(row => row.name.endsWith('-nacos'))
     expect(nacosRows.length).toBe(2)
     for (const row of nacosRows) {
+      if (typeof row.config === 'string') throw new Error('expected Nacos connection fields')
       expect(row.config?.dataId, `${row.id} must not name the application`)
         .not.toContain('DSH_APP_NAME')
     }

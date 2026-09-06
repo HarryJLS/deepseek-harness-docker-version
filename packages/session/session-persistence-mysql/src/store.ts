@@ -1,29 +1,11 @@
-/**
- * MySQL session store: the durable primitives the shared persistence
- * coordinator drives.
- *
- * The coordinator owns buffering, cursors, adoption, crash-repair sequencing,
- * and dispose quiescence; this module owns only the medium. Two tables carry
- * everything — one header row per session and one row per event — so a
- * container that keeps no filesystem still resumes a session, and several
- * replicas read the same log.
- *
- * Applications share both tables and are separated by the `app` column, which
- * leads every primary key and every predicate below. That is what lets one
- * database serve several deployments where the PostgreSQL store this replaces
- * gave each one its own schema.
- *
- * One consequence of the medium is worth stating plainly: a torn tail is
- * impossible here. A JSONL backend can crash mid-line and must hand the
- * coordinator a marker so the fragment can be truncated; an event row either
- * commits with its transaction or does not exist. `loadStored` therefore never
- * returns a `tornMarker`, and `commitRepair` only has to append closers.
- *
- * @module @deepseek-ai/dsh-session-persistence-mysql/store
- */
+/** Transactional OceanBase/MySQL session rows, scoped by application and durable user ownership. */
 
 import mysql from 'mysql2/promise'
-import { mysqlTable, tablesPresent, toJsonText } from '@deepseek-ai/dsh-mysql-schema'
+import {
+  assertMysqlTable, mysqlTable, tablesPresent, toJsonText, mysqlIdGenerator, mysqlAuditValues,
+  MYSQL_AUDIT_DDL, MYSQL_AUDIT_COLUMNS, MYSQL_AUDIT_VALUES,
+} from '@deepseek-ai/dsh-mysql-schema'
+import { canAccessUser, DEFAULT_USER_ID, parseUserId, requestUserId, type UserId } from '@deepseek-ai/dsh-user-context'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import {
   SessionPersistenceRevision,
@@ -33,270 +15,225 @@ import {
   type StoredSuffix,
 } from '@deepseek-ai/dsh-session-persistence'
 
-/** Tables owned by this store. */
 const SESSION_TABLE = mysqlTable('session')
 const EVENT_TABLE = mysqlTable('session_event')
 
-/** Maximum number of event rows returned by one recovery query. */
+/** Maximum event rows returned by one recovery query. */
 export const MYSQL_SESSION_READ_PAGE_SIZE = 1_000
 
-/**
- * Compose the source-qualified revision token. It must identify one storage
- * source AND one revision of the log, so the database and application identity
- * travel with the counter: two replicas pointed at different databases, or at
- * different applications in one database, must never mint colliding tokens.
- * @param source - stable identity of this store's medium.
- * @param revision - the session row's monotonic counter.
- * @returns the branded revision token.
- */
-function revisionToken(source: string, revision: string | number): SessionPersistenceRevision {
-  return SessionPersistenceRevision(`${source}:revision:${String(revision)}`)
+function revisionToken(source: string, row: mysql.RowDataPacket): SessionPersistenceRevision {
+  return SessionPersistenceRevision(`${source}:row:${String(row.row_id)}:revision:${String(row.revision)}`)
 }
 
-/**
- * Read a stored header, failing loud rather than publishing an unusable one.
- *
- * `mysql2` decodes a `json` column into a fresh JS value per row, so the
- * column arrives already parsed; re-parsing it would double-decode any
- * document that is itself a JSON string.
- */
-function toHeader(value: unknown, id: SessionId): SessionHeader {
+function toHeader(row: mysql.RowDataPacket, id: SessionId): SessionHeader {
+  const value: unknown = row.meta
   if (typeof value !== 'object' || value === null) {
     throw new Error(`session-persistence-mysql: session ${id} has a malformed header`)
   }
-  return value as SessionHeader
+  const header = value as SessionHeader
+  if (header.id !== id || (header.userId ?? DEFAULT_USER_ID) !== parseUserId(row.user_id)) {
+    throw new Error(`session-persistence-mysql: session ${id} has conflicting ownership metadata`)
+  }
+  return header
 }
 
-/** MySQL implementation of the coordinator's storage contract. */
+/** MySQL implementation of the persistence coordinator's durable operations. */
 export class MysqlSessionStore implements PersistenceBackend<never> {
   readonly name = 'session-persistence-mysql'
-
-  /** Stable identity of this medium, embedded in every revision token. */
   private readonly source: string
+  private readonly nextId: () => string
 
   constructor(
     private readonly pool: mysql.Pool,
     private readonly app: string,
     database: string,
+    snowflakeWorkerId = 0,
   ) {
     this.source = `mysql:${database}:${app}`
+    this.nextId = mysqlIdGenerator(snowflakeWorkerId)
   }
 
-  /**
-   * Create the two tables this store owns, unless a DBA already did.
-   *
-   * A production role often holds no DDL rights, and `CREATE TABLE IF NOT
-   * EXISTS` does not exempt a statement from the privilege check, so issuing
-   * the creates unconditionally makes such a database unusable. Both tables
-   * present means there is nothing to create; anything missing still runs the
-   * creates, so a half-provisioned database fails at start rather than at
-   * first write.
-   */
+  /** Create missing tables, then reject incompatible existing layouts without altering data. */
   async migrate(): Promise<void> {
-    if (await tablesPresent(this.pool, [SESSION_TABLE, EVENT_TABLE])) return
-    await this.pool.query(
-      `CREATE TABLE IF NOT EXISTS \`${SESSION_TABLE}\` (
-         app        varchar(64)  NOT NULL,
-         id         varchar(128) NOT NULL,
-         meta       json         NOT NULL,
-         revision   bigint       NOT NULL DEFAULT 0,
-         created_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-         PRIMARY KEY (app, id),
-         KEY \`${SESSION_TABLE}_created_at_idx\` (app, created_at)
-       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    if (!await tablesPresent(this.pool, [SESSION_TABLE, EVENT_TABLE])) {
+      await this.pool.query(
+        `CREATE TABLE IF NOT EXISTS \`${SESSION_TABLE}\` (
+           ${MYSQL_AUDIT_DDL},
+           app        varchar(64)  NOT NULL,
+           session_id varchar(128) NOT NULL,
+           user_id    varchar(32)  NOT NULL DEFAULT '-' COMMENT '所属用户',
+           meta       json         NOT NULL,
+           revision   bigint       NOT NULL DEFAULT 0,
+           PRIMARY KEY (id),
+           UNIQUE KEY dsh_session_identity_uk (app, session_id),
+           KEY dsh_session_owner_idx (app, user_id, is_deleted, gmt_created)
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
+      )
+      await this.pool.query(
+        `CREATE TABLE IF NOT EXISTS \`${EVENT_TABLE}\` (
+           ${MYSQL_AUDIT_DDL},
+           app        varchar(64)  NOT NULL,
+           session_id varchar(128) NOT NULL,
+           user_id    varchar(32)  NOT NULL DEFAULT '-' COMMENT '所属用户',
+           seq        int          NOT NULL,
+           event      json         NOT NULL,
+           PRIMARY KEY (id),
+           UNIQUE KEY dsh_session_event_sequence_uk (app, session_id, seq),
+           CONSTRAINT dsh_session_event_session_fk FOREIGN KEY (app, session_id)
+             REFERENCES \`${SESSION_TABLE}\` (app, session_id) ON DELETE CASCADE
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
+      )
+    }
+    await assertMysqlTable(this.pool, SESSION_TABLE, ['session_id', 'user_id'])
+    await assertMysqlTable(this.pool, EVENT_TABLE, ['session_id', 'user_id'])
+  }
+
+  private ownerPredicate(): { sql: string; values: string[] } {
+    const userId = requestUserId()
+    return userId === undefined ? { sql: '', values: [] } : { sql: ' AND user_id = ?', values: [userId] }
+  }
+
+  private async header(id: SessionId): Promise<mysql.RowDataPacket | undefined> {
+    const owner = this.ownerPredicate()
+    const [rows] = await this.pool.query<mysql.RowDataPacket[]>(
+      `SELECT CAST(id AS CHAR) AS row_id, meta, revision, user_id FROM \`${SESSION_TABLE}\`
+       WHERE app = ? AND session_id = ? AND is_deleted = 'N'${owner.sql}`,
+      [this.app, id, ...owner.values],
     )
-    await this.pool.query(
-      `CREATE TABLE IF NOT EXISTS \`${EVENT_TABLE}\` (
-         app        varchar(64)  NOT NULL,
-         session_id varchar(128) NOT NULL,
-         seq        int          NOT NULL,
-         event      json         NOT NULL,
-         PRIMARY KEY (app, session_id, seq),
-         CONSTRAINT \`${EVENT_TABLE}_session_fk\` FOREIGN KEY (app, session_id)
-           REFERENCES \`${SESSION_TABLE}\` (app, id) ON DELETE CASCADE
-       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
-    )
+    return rows[0]
   }
 
   async loadStored(id: SessionId, signal?: AbortSignal): Promise<StoredPrefix<never> | undefined> {
     signal?.throwIfAborted()
-    const [header] = await this.pool.query<mysql.RowDataPacket[]>(
-      `SELECT meta, revision FROM \`${SESSION_TABLE}\` WHERE app = ? AND id = ?`,
-      [this.app, id],
-    )
-    const row = header[0]
+    const row = await this.header(id)
     if (row === undefined) return undefined
-    signal?.throwIfAborted()
-    const events = await this.readEvents(id, 0, signal)
-    // The coordinator freezes and publishes these graphs in place, so they must
-    // be fresh and unaliased. The driver decodes each `json` column into a new
-    // value per read, which already satisfies that.
-    return {
-      meta: toHeader(row.meta, id),
-      events,
-      revision: revisionToken(this.source, row.revision as string),
-    }
+    const meta = toHeader(row, id)
+    const events = await this.readEvents(id, meta.userId ?? DEFAULT_USER_ID, 0, signal)
+    return { meta, events, revision: revisionToken(this.source, row) }
   }
 
-  async readStoredRevision(
-    id: SessionId,
-    signal?: AbortSignal,
-  ): Promise<SessionPersistenceRevision | undefined> {
+  async readStoredRevision(id: SessionId, signal?: AbortSignal): Promise<SessionPersistenceRevision | undefined> {
     signal?.throwIfAborted()
-    const [result] = await this.pool.query<mysql.RowDataPacket[]>(
-      `SELECT revision FROM \`${SESSION_TABLE}\` WHERE app = ? AND id = ?`,
-      [this.app, id],
-    )
-    const row = result[0]
-    return row === undefined ? undefined : revisionToken(this.source, row.revision as string)
+    const row = await this.header(id)
+    signal?.throwIfAborted()
+    return row === undefined ? undefined : revisionToken(this.source, row)
   }
 
-  /**
-   * Seek-capable suffix read: the medium addresses events by seq, so a read
-   * model resuming from a watermark never pays for the whole log.
-   */
-  async loadStoredFrom(
-    id: SessionId,
-    fromSeq: number,
-    signal?: AbortSignal,
-  ): Promise<StoredSuffix | undefined> {
+  async loadStoredFrom(id: SessionId, fromSeq: number, signal?: AbortSignal): Promise<StoredSuffix | undefined> {
     signal?.throwIfAborted()
-    const [header] = await this.pool.query<mysql.RowDataPacket[]>(
-      `SELECT meta FROM \`${SESSION_TABLE}\` WHERE app = ? AND id = ?`,
-      [this.app, id],
-    )
-    const row = header[0]
+    const row = await this.header(id)
     if (row === undefined) return undefined
-    signal?.throwIfAborted()
-    const events = await this.readEvents(id, fromSeq, signal)
-    return {
-      meta: toHeader(row.meta, id),
-      events,
-    }
+    const meta = toHeader(row, id)
+    return { meta, events: await this.readEvents(id, meta.userId ?? DEFAULT_USER_ID, fromSeq, signal) }
   }
 
-  /** Durably create an empty header-only session. */
+  /** Materialize a header without changing the owner of an existing identity. */
   async materializeHeader(meta: SessionHeader): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO \`${SESSION_TABLE}\` (app, id, meta, revision)
-       VALUES (?, ?, ?, 1)
-       ON DUPLICATE KEY UPDATE id = id`,
-      [this.app, meta.id, toJsonText(meta)],
+    await this.transaction(async (conn) => {
+      await this.insertHeader(conn, meta, 1)
+      await this.lockOwner(conn, meta)
+    })
+  }
+
+  async appendBatch(meta: SessionHeader, events: readonly SessionEvent[], isMaterialized: boolean): Promise<void> {
+    await this.transaction(async (conn) => {
+      if (!isMaterialized) await this.insertHeader(conn, meta, 0)
+      await this.lockOwner(conn, meta)
+      await this.insertEvents(conn, meta, events)
+      await this.bumpRevision(conn, meta)
+    })
+  }
+
+  async commitRepair(meta: SessionHeader, _tornMarker: undefined, closers: readonly SessionEvent[]): Promise<void> {
+    if (closers.length === 0) return
+    await this.transaction(async (conn) => {
+      await this.lockOwner(conn, meta)
+      await this.insertEvents(conn, meta, closers)
+      await this.bumpRevision(conn, meta)
+    })
+  }
+
+  private async transaction(operation: (conn: mysql.PoolConnection) => Promise<void>): Promise<void> {
+    const conn = await this.pool.getConnection()
+    try {
+      await conn.beginTransaction()
+      await operation(conn)
+      await conn.commit()
+    } catch (error) {
+      // A dropped connection can also reject rollback; retain the write failure.
+      await conn.rollback().catch(() => undefined)
+      throw error
+    } finally {
+      conn.release()
+    }
+  }
+
+  private async insertHeader(conn: mysql.PoolConnection, meta: SessionHeader, revision: number): Promise<void> {
+    const owner = meta.userId ?? DEFAULT_USER_ID
+    if (!canAccessUser(owner)) throw new Error('session-persistence-mysql: session not found')
+    await conn.query(
+      `INSERT INTO \`${SESSION_TABLE}\` (${MYSQL_AUDIT_COLUMNS}, app, session_id, user_id, meta, revision)
+       VALUES (${MYSQL_AUDIT_VALUES}, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE session_id = session_id`,
+      [...mysqlAuditValues(this.nextId, owner), this.app, meta.id, owner, toJsonText(meta), revision],
     )
   }
 
-  /**
-   * Append a contiguous batch, materializing the header first when needed. The
-   * contract requires the materialize-write and the first batch to commit
-   * atomically, which one transaction gives directly.
-   */
-  async appendBatch(
-    meta: SessionHeader,
-    events: readonly SessionEvent[],
-    isMaterialized: boolean,
-  ): Promise<void> {
-    const conn = await this.pool.getConnection()
-    try {
-      await conn.beginTransaction()
-      if (!isMaterialized) {
-        await conn.query(
-          `INSERT INTO \`${SESSION_TABLE}\` (app, id, meta, revision)
-           VALUES (?, ?, ?, 0)
-           ON DUPLICATE KEY UPDATE id = id`,
-          [this.app, meta.id, toJsonText(meta)],
-        )
-      }
-      await this.insertEvents(conn, meta.id, events)
-      await this.bumpRevision(conn, meta.id)
-      await conn.commit()
-    } catch (error) {
-      await conn.rollback().catch(() => undefined)
-      throw error
-    } finally {
-      conn.release()
-    }
-  }
-
-  /**
-   * Make a crash repair durable. A row-per-event medium cannot produce a torn
-   * tail, so `tornMarker` is never present and only the synthetic closers are
-   * appended — in one transaction, so a reader never observes a partial repair.
-   */
-  async commitRepair(
-    meta: SessionHeader,
-    _tornMarker: undefined,
-    closers: readonly SessionEvent[],
-  ): Promise<void> {
-    if (closers.length === 0) return
-    const conn = await this.pool.getConnection()
-    try {
-      await conn.beginTransaction()
-      await this.insertEvents(conn, meta.id, closers)
-      await this.bumpRevision(conn, meta.id)
-      await conn.commit()
-    } catch (error) {
-      await conn.rollback().catch(() => undefined)
-      throw error
-    } finally {
-      conn.release()
-    }
+  /** Lock the immutable owner before appending, including concurrent explicit-id creation. */
+  private async lockOwner(conn: mysql.PoolConnection, meta: SessionHeader): Promise<void> {
+    const owner = meta.userId ?? DEFAULT_USER_ID
+    if (!canAccessUser(owner)) throw new Error('session-persistence-mysql: session not found')
+    const [rows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT user_id FROM \`${SESSION_TABLE}\`
+       WHERE app = ? AND session_id = ? AND is_deleted = 'N' FOR UPDATE`,
+      [this.app, meta.id],
+    )
+    if (rows[0]?.user_id !== owner) throw new Error('session-persistence-mysql: session not found')
   }
 
   async list(signal?: AbortSignal): Promise<SessionHeader[]> {
-    signal?.throwIfAborted()
-    const [result] = await this.pool.query<mysql.RowDataPacket[]>(
-      `SELECT id, meta FROM \`${SESSION_TABLE}\` WHERE app = ? ORDER BY created_at ASC`,
-      [this.app],
-    )
-    return result.map(row => toHeader(row.meta, row.id as SessionId))
+    return (await this.listSnapshots(signal)).map(snapshot => snapshot.header)
   }
 
   /**
-   * Every materialized session with its current revision, for the listing
-   * surface that renders staleness without loading any log.
+   * List active session revisions belonging to the current user, or all for Host maintenance.
    * @param signal - optional cancellation for the read.
-   * @returns one snapshot per stored session, in creation order.
+   * @returns snapshots in creation order.
    */
   async listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot[]> {
     signal?.throwIfAborted()
-    const [result] = await this.pool.query<mysql.RowDataPacket[]>(
-      `SELECT id, meta, revision FROM \`${SESSION_TABLE}\` WHERE app = ? ORDER BY created_at ASC`,
-      [this.app],
+    const owner = this.ownerPredicate()
+    const [rows] = await this.pool.query<mysql.RowDataPacket[]>(
+      `SELECT CAST(id AS CHAR) AS row_id, session_id, meta, revision, user_id FROM \`${SESSION_TABLE}\`
+       WHERE app = ? AND is_deleted = 'N'${owner.sql} ORDER BY gmt_created ASC, id ASC`,
+      [this.app, ...owner.values],
     )
-    return result.map(row => ({
-      header: toHeader(row.meta, row.id as SessionId),
-      revision: revisionToken(this.source, row.revision as string),
+    signal?.throwIfAborted()
+    return rows.map(row => ({
+      header: toHeader(row, row.session_id as SessionId),
+      revision: revisionToken(this.source, row),
     }))
   }
 
-  /** No per-session artifact exists in a database medium. */
-  locate(): undefined {
-    return undefined
-  }
+  locate(): undefined { return undefined }
 
-  async close(): Promise<void> {
-    await this.pool.end()
-  }
+  async close(): Promise<void> { await this.pool.end() }
 
-  /** Read event rows with a keyset cursor so recovery never returns one huge result set. */
-  private async readEvents(
-    id: SessionId,
-    fromSeq: number,
-    signal?: AbortSignal,
-  ): Promise<SessionEvent[]> {
+  private async readEvents(id: SessionId, owner: UserId, fromSeq: number, signal?: AbortSignal): Promise<SessionEvent[]> {
     const events: SessionEvent[] = []
     let afterSeq = fromSeq - 1
     for (;;) {
       signal?.throwIfAborted()
       const [page] = await this.pool.query<mysql.RowDataPacket[]>(
         `SELECT seq, event FROM \`${EVENT_TABLE}\`
-         WHERE app = ? AND session_id = ? AND seq > ?
+         WHERE app = ? AND session_id = ? AND user_id = ? AND is_deleted = 'N' AND seq > ?
          ORDER BY seq ASC LIMIT ?`,
-        [this.app, id, afterSeq, MYSQL_SESSION_READ_PAGE_SIZE],
+        [this.app, id, owner, afterSeq, MYSQL_SESSION_READ_PAGE_SIZE],
       )
+      signal?.throwIfAborted()
       for (const entry of page) events.push(entry.event as SessionEvent)
       if (page.length < MYSQL_SESSION_READ_PAGE_SIZE) break
-      const nextSeq = page.at(-1)?.seq
+      const nextSeq: unknown = page.at(-1)?.seq
       if (typeof nextSeq !== 'number' || !Number.isSafeInteger(nextSeq) || nextSeq <= afterSeq) {
         throw new Error(`session-persistence-mysql: invalid event page cursor for session ${id}`)
       }
@@ -305,32 +242,25 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
     return events
   }
 
-  /** Insert one contiguous batch of events, keyed by their own seq. */
-  private async insertEvents(
-    conn: mysql.PoolConnection,
-    id: SessionId,
-    events: readonly SessionEvent[],
-  ): Promise<void> {
+  private async insertEvents(conn: mysql.PoolConnection, meta: SessionHeader, events: readonly SessionEvent[]): Promise<void> {
     if (events.length === 0) return
-    // One multi-row statement rather than a statement per event: the batch is
-    // already contiguous and the whole transaction commits together anyway.
+    const owner = meta.userId ?? DEFAULT_USER_ID
     const values: unknown[] = []
     const tuples = events.map((event) => {
-      values.push(this.app, id, event.seq, toJsonText(event))
-      return '(?, ?, ?, ?)'
+      values.push(...mysqlAuditValues(this.nextId, owner), this.app, meta.id, owner, event.seq, toJsonText(event))
+      return `(${MYSQL_AUDIT_VALUES}, ?, ?, ?, ?, ?)`
     })
     await conn.query(
-      `INSERT INTO \`${EVENT_TABLE}\` (app, session_id, seq, event)
-       VALUES ${tuples.join(', ')}`,
-      values,
+      `INSERT INTO \`${EVENT_TABLE}\` (${MYSQL_AUDIT_COLUMNS}, app, session_id, user_id, seq, event)
+       VALUES ${tuples.join(', ')}`, values,
     )
   }
 
-  /** Advance the session's revision inside the caller's transaction. */
-  private async bumpRevision(conn: mysql.PoolConnection, id: SessionId): Promise<void> {
+  private async bumpRevision(conn: mysql.PoolConnection, meta: SessionHeader): Promise<void> {
     await conn.query(
-      `UPDATE \`${SESSION_TABLE}\` SET revision = revision + 1 WHERE app = ? AND id = ?`,
-      [this.app, id],
+      `UPDATE \`${SESSION_TABLE}\` SET revision = revision + 1, modifier = ?, gmt_modified = CURRENT_TIMESTAMP
+       WHERE app = ? AND session_id = ? AND user_id = ? AND is_deleted = 'N'`,
+      [meta.userId ?? DEFAULT_USER_ID, this.app, meta.id, meta.userId ?? DEFAULT_USER_ID],
     )
   }
 }

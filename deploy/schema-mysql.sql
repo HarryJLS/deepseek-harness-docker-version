@@ -4,11 +4,10 @@
 -- DML 权限，插件启动时会先探测这些表；表齐全就跳过建表，缺表才尝试创建（并因
 -- 无权限而明确失败）。所以这份脚本由 DBA 执行一次即可。
 --
--- 与 PostgreSQL 版本的两点差异：
---   1. 所有表名统一带 dsh_ 前缀，避免与库中其它业务表重名。
---   2. MySQL 的 schema 就是 database，没有库内命名空间，因此“区分应用”不再靠
---      每个应用一个 schema，而是每张表的第一主键列 app。多个应用共用同一套表、
---      同一个连接池，互不覆盖；运维用 WHERE app = '...' 就能读某个应用的数据。
+-- 每张表使用应用生成的 bigint 雪花主键和统一审计列；原业务键由唯一索引约束。
+-- app 区分应用，user_id 区分会话/附件的用户。没有用户信息时使用 '-'。
+-- 标识符按 utf8mb4_bin 比较，不合并大小写不同的应用或用户。
+-- 本脚本用于新库。已有旧表不会自动升级，应用会拒绝不兼容的表结构。
 --
 -- app 的取值来自应用的 deployment.appName（或 DSH_APP_NAME），原样存储，不做
 -- 大小写或分隔符折叠：order-svc 和 Order Service 是两个应用。
@@ -18,62 +17,105 @@ USE dsh;
 
 -- ── 会话 ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS dsh_session (
-  app        varchar(64)  NOT NULL,
-  id         varchar(128) NOT NULL,
-  meta       json         NOT NULL,
-  revision   bigint       NOT NULL DEFAULT 0,
-  created_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (app, id),
-  KEY dsh_session_created_at_idx (app, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS dsh_session_event (
+  id           bigint      NOT NULL COMMENT '雪花主键',
+  is_deleted   char(1)     NOT NULL DEFAULT 'N' COMMENT '是否删除，默认N',
+  creator      varchar(32) NOT NULL COMMENT '创建者',
+  gmt_created  datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  modifier     varchar(32) NOT NULL COMMENT '更新者',
+  gmt_modified datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
   app        varchar(64)  NOT NULL,
   session_id varchar(128) NOT NULL,
+  user_id    varchar(32)  NOT NULL DEFAULT '-' COMMENT '所属用户',
+  meta       json         NOT NULL,
+  revision   bigint       NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY dsh_session_identity_uk (app, session_id),
+  KEY dsh_session_owner_idx (app, user_id, is_deleted, gmt_created)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS dsh_session_event (
+  id           bigint      NOT NULL COMMENT '雪花主键',
+  is_deleted   char(1)     NOT NULL DEFAULT 'N' COMMENT '是否删除，默认N',
+  creator      varchar(32) NOT NULL COMMENT '创建者',
+  gmt_created  datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  modifier     varchar(32) NOT NULL COMMENT '更新者',
+  gmt_modified datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+  app        varchar(64)  NOT NULL,
+  session_id varchar(128) NOT NULL,
+  user_id    varchar(32)  NOT NULL DEFAULT '-' COMMENT '所属用户',
   seq        int          NOT NULL,
   event      json         NOT NULL,
-  PRIMARY KEY (app, session_id, seq),
+  PRIMARY KEY (id),
+  UNIQUE KEY dsh_session_event_sequence_uk (app, session_id, seq),
   CONSTRAINT dsh_session_event_session_fk FOREIGN KEY (app, session_id)
-    REFERENCES dsh_session (app, id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    REFERENCES dsh_session (app, session_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- ── 存储（KV） ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS dsh_kv_unit (
+  id           bigint      NOT NULL COMMENT '雪花主键',
+  is_deleted   char(1)     NOT NULL DEFAULT 'N' COMMENT '是否删除，默认N',
+  creator      varchar(32) NOT NULL COMMENT '创建者',
+  gmt_created  datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  modifier     varchar(32) NOT NULL COMMENT '更新者',
+  gmt_modified datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
   app     varchar(64)  NOT NULL,
   unit    varchar(128) NOT NULL,
   version int          NOT NULL,
-  PRIMARY KEY (app, unit)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  PRIMARY KEY (id),
+  UNIQUE KEY dsh_kv_unit_identity_uk (app, unit)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- key 是 MySQL 保留字，列名用 key_name。
 CREATE TABLE IF NOT EXISTS dsh_kv_record (
+  id           bigint      NOT NULL COMMENT '雪花主键',
+  is_deleted   char(1)     NOT NULL DEFAULT 'N' COMMENT '是否删除，默认N',
+  creator      varchar(32) NOT NULL COMMENT '创建者',
+  gmt_created  datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  modifier     varchar(32) NOT NULL COMMENT '更新者',
+  gmt_modified datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
   app      varchar(64)  NOT NULL,
   unit     varchar(128) NOT NULL,
   tbl      varchar(128) NOT NULL,
   key_name varchar(255) NOT NULL,
   value    json         NOT NULL,
-  PRIMARY KEY (app, unit, tbl, key_name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  PRIMARY KEY (id),
+  UNIQUE KEY dsh_kv_record_identity_uk (app, unit, tbl, key_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS dsh_kv_global (
+  id           bigint      NOT NULL COMMENT '雪花主键',
+  is_deleted   char(1)     NOT NULL DEFAULT 'N' COMMENT '是否删除，默认N',
+  creator      varchar(32) NOT NULL COMMENT '创建者',
+  gmt_created  datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  modifier     varchar(32) NOT NULL COMMENT '更新者',
+  gmt_modified datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
   app   varchar(64)  NOT NULL,
   unit  varchar(128) NOT NULL,
   value json         NOT NULL,
-  PRIMARY KEY (app, unit)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  PRIMARY KEY (id),
+  UNIQUE KEY dsh_kv_global_identity_uk (app, unit)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- ── 附件 ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS dsh_attachment_object (
+  id           bigint      NOT NULL COMMENT '雪花主键',
+  is_deleted   char(1)     NOT NULL DEFAULT 'N' COMMENT '是否删除，默认N',
+  creator      varchar(32) NOT NULL COMMENT '创建者',
+  gmt_created  datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  modifier     varchar(32) NOT NULL COMMENT '更新者',
+  gmt_modified datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
   app        varchar(64)  NOT NULL,
+  user_id    varchar(32)  NOT NULL DEFAULT '-' COMMENT '所属用户',
   sha256     varchar(64)  NOT NULL,
   media_type varchar(64)  NOT NULL,
   bytes      int          NOT NULL,
   width      int          NOT NULL,
   height     int          NOT NULL,
   data       longblob     NOT NULL,
-  created_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (app, sha256)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  PRIMARY KEY (id),
+  UNIQUE KEY dsh_attachment_object_identity_uk (app, user_id, sha256)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- ── 应用账号：只给 DML，不给 DDL ──────────────────────────────────────────
 -- 把 <app_user> / <app_password> 换成实际值。OceanBase 的用户名在连接串里写作

@@ -3804,7 +3804,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CreateSessionOptions',
-    declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
+    declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly meta?: {\n        readonly userId?: UserId;\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
   },
   {
     name: 'CreateTeamTaskRequest',
@@ -4884,7 +4884,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionHeader',
-    declaration: 'export interface SessionHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly seedLength?: number;\n    readonly origin?: \'subagent\';\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
+    declaration: 'export interface SessionHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly userId?: UserId;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly seedLength?: number;\n    readonly origin?: \'subagent\';\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
   },
   {
     name: 'SessionHistoryRecord',
@@ -5844,11 +5844,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TypertRemoteEventFrame',
-    declaration: 'export interface TypertRemoteEventFrame {\n    readonly event: string;\n    readonly args: readonly unknown[];\n}',
+    declaration: 'export interface TypertRemoteEventFrame {\n    readonly userId?: import(\'@deepseek-ai/dsh-user-context/identity\').UserId;\n    readonly event: string;\n    readonly args: readonly unknown[];\n}',
   },
   {
     name: 'TypertRemoteEventInvocation',
-    declaration: 'export interface TypertRemoteEventInvocation {\n    readonly event: string;\n    readonly request: object;\n    readonly context: TypertRemoteEventContext;\n    readonly resolve: (outcome: TypertRemoteEventOutcome) => void;\n    readonly reject: (reason: unknown) => void;\n}',
+    declaration: 'export interface TypertRemoteEventInvocation {\n    readonly userId?: import(\'@deepseek-ai/dsh-user-context/identity\').UserId;\n    readonly event: string;\n    readonly request: object;\n    readonly context: TypertRemoteEventContext;\n    readonly resolve: (outcome: TypertRemoteEventOutcome) => void;\n    readonly reject: (reason: unknown) => void;\n}',
   },
   {
     name: 'TypertRemoteEventOutcome',
@@ -5881,6 +5881,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'UpdateTeamTaskRequest',
     declaration: 'export interface UpdateTeamTaskRequest {\n    readonly taskId: TeamTaskId;\n    readonly expectedRevision: number;\n    readonly action: TeamTaskAction;\n    readonly subject?: string;\n    readonly description?: string;\n    readonly blockedBy?: readonly TeamTaskId[];\n    readonly writeScopes?: readonly string[];\n    readonly owner?: string;\n}',
+  },
+  {
+    name: 'UserId',
+    declaration: 'export type UserId = Branded<\'UserId\'>;',
   },
   {
     name: 'UserMessage',

@@ -1,13 +1,15 @@
 ---
-description: "The shared MySQL/OceanBase connection vocabulary, `dsh_` table prefix, per-application row scoping, and DDL-free provisioning probe, for maintainers writing a harness plugin backed by a MySQL-protocol database."
-kind: "package-reference"
+description: "OceanBase/MySQL connection resolution, Snowflake row identities, audit fields, and existing-table validation."
+kind: "package-library"
 ---
 
 # @deepseek-ai/dsh-mysql-schema
 
+English | [中文](README.zh.md)
+
 ## Summary
 
-`dsh-mysql-schema` holds the four things every harness MySQL plugin needs before it can own a table: one declaration of how to reach the database, one prefix that keeps its tables out of a shared database's namespace, one application name that separates several deployments' rows inside one table, and one probe that lets it start against a database whose role holds no DDL rights. It targets OceanBase in MySQL mode and MySQL itself; nothing here is OceanBase-specific beyond the default port.
+Shared helpers used by the MySQL storage, session, and attachment providers. The library constructs no connection pool and has no plugin entry; callers use its resolved options with mysql2.
 
 ## Table of Contents
 
@@ -16,43 +18,22 @@ kind: "package-reference"
 - [Further Exploration](#further-exploration)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
 
 -----
 
 <a id="use-this-package"></a>
 ## Use this package
 
-Use this package when a plugin owns tables in a MySQL-protocol database. It supplies the config fields, their defaults, the pool options, the table names, and the provisioning probe.
+The exported connection schema and resolve functions own host, port, database, account, pool size, application name, and Snowflake worker configuration. A configured URL takes precedence over individual connection fields. Container deployments supply all database options from [Nacos](../../../deploy/README.md#database-configuration).
 
-```ts
-export const Config: z<Config> = z.object({
-  ...mysqlConnectionSchema,
-  name: z.string().default('mysql'),
-})
+<a id="isolating-several-applications-in-one-database"></a>
 
-const app = resolveMysqlApp(config)
-const pool = mysql.createPool(resolveMysqlPool(config))
-const table = mysqlTable('kv_record')          // -> dsh_kv_record
-if (!await tablesPresent(pool, [table])) { /* issue the creates */ }
-```
+Every owned table has the fixed `dsh_` prefix, a signed BIGINT Snowflake primary key, and the five audit fields. Application and logical identifiers have separate unique indexes. Binary collation distinguishes differently cased application and user names; `app` is a verbatim nonempty value of at most 64 characters, defaulting to `dsh`.
 
-### Isolating several applications in one database
+Inserts explicitly write all audit fields. Updates retain the row id, creator, and creation time while refreshing the modifier and modification time. Worker numbers range from 0 through 1023; 0 is the single-replica default. All concurrent processes sharing tables require distinct worker numbers and synchronized clocks. The driver returns BIGINT values as strings.
 
-MySQL has no schema inside a database — a schema *is* a database — so applications are separated by a column rather than by a namespace. Every harness table carries `app` as the leading primary-key column, and each plugin binds `resolveMysqlApp(config)` into every statement it issues.
-
-| `app` | Rows are written as | An operator reads them with |
-|---|---|---|
-| unset | `app = 'dsh'` | `WHERE app = 'dsh'` |
-| `order-svc` | `app = 'order-svc'` | `WHERE app = 'order-svc'` |
-| `Order Service` | `app = 'Order Service'` | `WHERE app = 'Order Service'` |
-
-The name is stored verbatim. It reaches SQL as a bound parameter rather than as an identifier, so there is nothing to escape, and folding it would silently merge two distinct applications' rows — `order-svc` and `Order Service` stay distinct here where a folded schema identifier collapsed both onto `order_svc`. Only the length is checked, because the column is `varchar(64)` and silent truncation would cause the same merge.
-
-### Starting against a database you cannot provision
-
-A production role usually holds only `SELECT`/`INSERT`/`UPDATE`/`DELETE`, and `CREATE TABLE IF NOT EXISTS` is not exempt from the privilege check: it fails on a table that already exists just as it would on one that does not. Every plugin therefore calls `tablesPresent` first and issues its creates only when a table is genuinely absent — so a fully provisioned database needs no rights at all, and a half-provisioned one still fails loudly at start rather than at first write. [`deploy/schema-mysql.sql`](../../../deploy/schema-mysql.sql) is the statement set a DBA runs.
-
-The package constructs no pool itself and does not depend on `mysql2`; `resolveMysqlPool` returns plain options the caller hands to whatever client it uses.
+Providers probe existing tables before issuing DDL. Existing tables must pass audit-column and primary-key checks; incompatible layouts are rejected rather than altered. A DBA can provision [schema-mysql.sql](../../../deploy/schema-mysql.sql) for a role with only DML permissions.
 
 -----
 
@@ -60,51 +41,40 @@ The package constructs no pool itself and does not depend on `mysql2`; `resolveM
 ## Understand the implementation
 
 <details>
-<summary>Implementation internals — click to expand</summary>
+<summary>Implementation internals</summary>
 
-### Design philosophy
-
-- **A value, not an identifier.** Moving application scoping from a schema name to a column removes the whole class of identifier-folding problems: no guard, no rejection of names starting with a digit, no two applications quietly sharing a medium.
-- **One place declares the defaults.** Host, port, database, user, pool size, and the application default are stated once, so every MySQL plugin accepts the same fields and resolves them to the same values.
-- **One place declares the prefix.** Plugins name tables through `mysqlTable`, so `dsh_` is written once and a table cannot end up half renamed.
-- **Look before you leap.** The probe reads `information_schema`, which needs no privilege beyond the connection, and is scoped to `DATABASE()` so a same-named table elsewhere cannot answer it.
-- **The database name is resolvable from a URL.** An identity or revision token qualified by its medium needs the database name even when the operator configured a connection string.
-
-### Source map
-
-| File | Role |
-|---|---|
-| [`src/index.ts`](src/index.ts) | Table prefixing, application-name resolution, JSON serialization, provisioning probe, connection config, pool and database resolution |
+The Snowflake generator is shared per worker within the process and retains monotonic logical time across clock rollback and sequence exhaustion. JSON serialization replaces NUL characters in string values with U+FFFD without rewriting literal escape text. Connection defaults and schema checks live in [src/index.ts](src/index.ts); audit definitions and ID generation live in [src/audit.ts](src/audit.ts).
 
 </details>
-
------
 
 <a id="further-exploration"></a>
 ## Further Exploration
 
-- [storage-mysql](../../storage/storage-mysql/README.md), [session-persistence-mysql](../../session/session-persistence-mysql/README.md), [attachment-mysql](../../attachment/attachment-mysql/README.md) — the three consumers.
-- [Container deployment guide](../../../deploy/README.md) — where these plugins are mounted.
-
------
+- [Session provider](../../session/session-persistence-mysql/README.md)
+- [KV backend](../../storage/storage-mysql/README.md)
 
 <a id="model-experience"></a>
 ## Model Experience
 
-None. This package is pure resolution and serialization helpers plus one `information_schema` read.
+None, as database configuration, audit fields, and row identifiers add no model content.
 
 #### KV Cache effect
 
-No direct invalidation; the consuming plugin owns any request-prefix changes.
+No request-prefix changes are introduced by these helpers.
 
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
 
-These limits define when the package is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
+- Worker-number uniqueness across processes is an operator responsibility; the library does not allocate distributed leases.
+- The table prefix is fixed, and the provisioning probes require a MySQL-compatible information_schema.
 
-- **Row scoping is only as good as the predicates** — `app` isolates applications only because every statement in every consumer binds it. One missed predicate reads or overwrites another application's rows, where a per-database separation would have failed with a missing table instead. The consumers' contract suites are what hold this.
-- **`app` is bounded at 64 characters** — the column is `varchar(64)` so it stays inside InnoDB's index-length limit alongside the unit, table, and key columns that follow it in the primary key.
-- **No migration framework** — each consumer issues its own `CREATE TABLE IF NOT EXISTS`; there is no version table, no ordering, and no down path.
-- **No connection retry** — a database that is not yet accepting connections fails the plugin load. Deployment ordering (a compose health check, an init container) owns that.
-- **No DDL is ever issued for a provisioned database** — which also means a column added to a future release's DDL will not appear on a database a DBA provisioned by hand. Schema evolution is an operator task, announced in the release notes.
+<a id="dev-note"></a>
+### Dev Note
+
+<details>
+<summary>Working context for maintainers</summary>
+
+None.
+
+</details>

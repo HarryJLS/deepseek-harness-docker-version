@@ -2,6 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { BrowserAuth } from '../src/browser-auth.ts'
 import { HostConnectionService } from '../src/rpc-host.ts'
+import { currentUserId } from '@deepseek-ai/dsh-user-context'
 
 async function mounted(): Promise<{
   readonly connection: HostConnectionService
@@ -19,6 +20,37 @@ async function mounted(): Promise<{
 }
 
 describe('Connection exact Fetch routes', () => {
+  it('isolates concurrent trusted-header requests and rejects ambiguous identities', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin((pluginCtx) => {
+      new HostConnectionService(pluginCtx, [], {} as BrowserAuth, {
+        allowAnyHost: true, requireAuth: false, userIdHeader: 'x-user-id',
+      })
+    })
+    await fiber.await()
+    const connection = ctx.get('connection') as HostConnectionService
+    connection.fetch.register({
+      path: '/api/user', methods: ['GET'],
+      fetch: async () => {
+        await new Promise(resolve => setImmediate(resolve))
+        return Response.json({ userId: currentUserId() })
+      },
+    })
+    try {
+      const shared = connection.createSharedFetchHandler('/api')
+      const results = await Promise.all(['alice', 'bob', undefined].map(async (user) => {
+        const response = await shared.fetch(new Request('http://host/api/user', {
+          headers: user === undefined ? {} : { 'x-user-id': user },
+        }))
+        const body: unknown = await response.json()
+        return body
+      }))
+      expect(results).toEqual([{ userId: 'alice' }, { userId: 'bob' }, { userId: '-' }])
+      expect(connection.requestRejection({ headers: { host: 'host', 'x-user-id': ['alice', 'bob'] } })).toBe(403)
+      expect(connection.requestRejection({ headers: { host: 'host', 'x-user-id': 'a'.repeat(33) } })).toBe(403)
+    } finally { await fiber.dispose() }
+  })
+
   it('dispatches owned methods and returns 404 for unclaimed requests', async () => {
     const { connection, dispose: disposeFiber } = await mounted()
     const route = vi.fn(async (request: Request) =>

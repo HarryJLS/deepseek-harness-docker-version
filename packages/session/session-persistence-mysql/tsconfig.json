@@ -28,6 +28,9 @@
     },
     {
       "path": "../../util/mysql-schema"
+    },
+    {
+      "path": "../../identity/user-context"
     }
   ]
 }

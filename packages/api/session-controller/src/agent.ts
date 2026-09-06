@@ -12,11 +12,21 @@ import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-session-query'
 import { TypertLookupFailure } from '@deepseek-ai/dsh-typert-protocol'
+import { canAccessUser, requestUserId, withUser } from '@deepseek-ai/dsh-user-context'
 import type {} from '@deepseek-ai/dsh-typert-registry'
 import type { ModelSelection, SessionError } from './types.ts'
 
 /** Cold Session identity absent from persistence. */
 export class ApiSessionNotFound extends Error {}
+
+/**
+ * Refuse an identity owned by another platform user.
+ * @param header - immutable metadata belonging to the selected session.
+ * @throws the ordinary not-found error without disclosing the owner.
+ */
+export function assertApiSessionUser(header: SessionHeader): void {
+  if (!canAccessUser(header.userId)) throw new ApiSessionNotFound(`session "${header.id}" not found`)
+}
 
 /** Session identity whose lifecycle belongs to subagent routing. */
 export class ApiSessionSubagentOwnership extends Error {
@@ -185,6 +195,9 @@ export class ApiSessionAgentController {
     const live = this.liveAgent(sessionId)
     if (live !== undefined) return live
     const attached = this.ctx.sessions.get(sessionId)
+    if (attached !== undefined && !canAccessUser(attached.header.userId)) {
+      return { error: { code: 'session-not-found', message: `session "${sessionId}" not found`, details: { sessionId } } }
+    }
     if (attached !== undefined && hasApiSessionSubagentOwner(this.ctx, attached, undefined)) {
       return { error: apiSessionSubagentOwnershipError(sessionId) }
     }
@@ -195,7 +208,9 @@ export class ApiSessionAgentController {
       this.resumes.set(sessionId, resume)
     }
     try {
-      return { agent: await resume }
+      const agent = await resume
+      assertApiSessionUser(agent.session.header)
+      return { agent }
     } catch (error: unknown) {
       if (error instanceof ApiSessionNotFound) {
         return {
@@ -245,6 +260,7 @@ export class ApiSessionAgentController {
         .catch((error: unknown) => {
           const live = this.ctx.agents.get(sessionId)
           if (live !== undefined) {
+            assertApiSessionUser(live.session.header)
             if (hasApiSessionSubagentOwner(this.ctx, live.session, live)) {
               throw new ApiSessionSubagentOwnership(sessionId)
             }
@@ -260,6 +276,7 @@ export class ApiSessionAgentController {
       this.creations.set(sessionId, creation)
     }
     const agent = await creation
+    assertApiSessionUser(agent.session.header)
     if (hasApiSessionSubagentOwner(this.ctx, agent.session, agent)) {
       throw new ApiSessionSubagentOwnership(sessionId)
     }
@@ -394,6 +411,9 @@ export class ApiSessionAgentController {
   private liveAgent(sessionId: SessionId): ApiSessionAgentResult | undefined {
     const agent = this.ctx.agents.get(sessionId)
     if (agent === undefined) return undefined
+    if (!canAccessUser(agent.session.header.userId)) {
+      return { error: { code: 'session-not-found', message: `session "${sessionId}" not found`, details: { sessionId } } }
+    }
     return hasApiSessionSubagentOwner(this.ctx, agent.session, agent)
       ? { error: apiSessionSubagentOwnershipError(sessionId) }
       : { agent }
@@ -417,6 +437,7 @@ export class ApiSessionAgentController {
     sessionId: SessionId,
     observation: SessionObservation,
   ): Promise<Agent> {
+    assertApiSessionUser(observation.header)
     if (observation.header.id !== sessionId || observation.header.cwd === undefined) {
       throw new ApiSessionNotFound(`session "${sessionId}" not found`)
     }
@@ -444,6 +465,8 @@ export class ApiSessionAgentController {
   ): Promise<Agent> {
     const attached = this.ctx.sessions.get(sessionId)
     const live = this.ctx.agents.get(sessionId)
+    if (attached !== undefined) assertApiSessionUser(attached.header)
+    if (live !== undefined) assertApiSessionUser(live.session.header)
     if (attached !== undefined && hasApiSessionSubagentOwner(this.ctx, attached, live)) {
       throw new ApiSessionSubagentOwnership(sessionId)
     }
@@ -451,7 +474,8 @@ export class ApiSessionAgentController {
 
     if (checkPersistedIdentity) {
       try {
-        using observation = await this.ctx.sessionQuery.observeSession(sessionId)
+        using observation = await withUser(undefined, () => this.ctx.sessionQuery.observeSession(sessionId))
+        assertApiSessionUser(observation.header)
         if (hasApiSessionSubagentOwner(this.ctx, { header: observation.header }, undefined)) {
           throw new ApiSessionSubagentOwnership(sessionId)
         }
@@ -478,11 +502,13 @@ export class ApiSessionAgentController {
       throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
     }
     const composition = await this.composeAgent(presetId)
+    const userId = requestUserId()
     return (await this.ctx.agents.create({
       sessionId,
       agentOptions: this.agentOptions(),
       meta: {
         cwd,
+        ...(userId === undefined ? {} : { userId }),
         ...(composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset }),
       },
       setup: composition.setup,

@@ -40,6 +40,8 @@
     "@deepseek-ai/dsh-invariants": "workspace:^"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-user-context": "workspace:^",
+    "@sapphire/snowflake": "^3.5.5",
     "@deepseek-ai/schemastery": "workspace:^"
   }
 }

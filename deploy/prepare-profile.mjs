@@ -27,8 +27,9 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { NACOS_AUTH, resolveDeploymentDocument, deploymentEnvironment, environmentScript } from './deployment-config.mjs'
 
 const DSH_BIN = process.env.DSH_BIN ?? '/app/apps/cli/lib/bin.js'
 const PROFILE = process.env.DSH_PROFILE ?? 'web'
@@ -94,24 +95,19 @@ function splitSpecs(value) {
 /**
  * Read the Nacos-declared roster, if the deployment has one.
  *
- * Nacos is optional here: a deployment that configures no Nacos, or whose entry
- * does not exist, gets an empty roster rather than a failed start — the plugin
- * list is not what the container needs to serve its first request. A
- * malformed entry IS fatal, because silently starting without the plugins an
- * operator declared is worse than not starting.
+ * The database settings entry is required before profile preparation. A
+ * missing optional roster is allowed; connection and read failures propagate.
  *
  * @returns the declared registry (or undefined) and package specs.
  */
 async function readNacosEntries(dataIds) {
-  const host = process.env.DSH_NACOS_HOST
-  if (host === undefined || host === '') return {}
+  const host = process.env.DSH_NACOS_HOST ?? 'nacos'
   const { NacosConfigClient } = await import(NACOS_CLIENT)
   const client = new NacosConfigClient({
     host,
     port: Number(process.env.DSH_NACOS_PORT ?? 8848),
     namespace: process.env.DSH_NACOS_NAMESPACE ?? '',
-    ...process.env.DSH_NACOS_USERNAME !== undefined && { username: process.env.DSH_NACOS_USERNAME },
-    ...process.env.DSH_NACOS_PASSWORD !== undefined && { password: process.env.DSH_NACOS_PASSWORD },
+    ...NACOS_AUTH,
   })
   client.setErrorHandler(error => {
     console.warn(`entrypoint: nacos read failed: ${String(error)}`)
@@ -123,84 +119,19 @@ async function readNacosEntries(dataIds) {
     for (const dataId of dataIds) {
       out[dataId] = (await client.read({ dataId, group })).content
     }
-  } catch (error) {
-    console.warn(`entrypoint: cannot reach Nacos; continuing without it (${String(error)})`)
-    return {}
   } finally {
     client.close()
   }
   return out
 }
 
-/**
- * Environment variable each declared database field is published as, and the
- * `!!js` expression in the composition that reads it.
- *
- * Declared once so the settings entry's vocabulary and the container's
- * environment cannot drift apart: a field added here is readable from Nacos
- * and from the environment with no other change.
- */
-const DATABASE_ENV = {
-  url: 'DSH_MYSQL_URL',
-  host: 'DSH_MYSQL_HOST',
-  port: 'DSH_MYSQL_PORT',
-  database: 'DSH_MYSQL_DB',
-  user: 'DSH_MYSQL_USER',
-  password: 'DSH_MYSQL_PASSWORD',
-}
-
-/**
- * What this deployment declares about itself in its Nacos settings entry: the
- * application name that scopes its rows, and how to reach the database.
- *
- * The settings entry is the declaring home. An application owns its Nacos, so
- * naming itself and its database credentials there keeps its whole identity in
- * one place and leaves the container's environment to say only where Nacos
- * lives. The environment remains the fallback for every field, for a
- * deployment that has no settings entry yet or pins a value outside Nacos.
- *
- * Credentials specifically belong here rather than in the container's
- * environment: rotating a database password becomes a Nacos edit and a
- * restart, not a redeploy, and the secret stops appearing in `docker inspect`
- * and in the compose file. Scope the entry's Nacos namespace accordingly — it
- * now holds a database password.
- *
- * Read once, at start, because these values are bound when each database
- * plugin opens its pool: a later change cannot move rows that are already
- * written, so it takes effect on the next start rather than pretending to be
- * live.
- * @param content - the settings entry body, or undefined when absent.
- * @returns the application name and every declared database field.
- */
+/** Read and validate the required database configuration from Nacos. */
 async function resolveDeployment(content) {
-  const fallback = { appName: process.env.DSH_APP_NAME ?? 'dsh', database: {} }
-  if (content === undefined || content.trim() === '') return fallback
+  if (content === undefined || content.trim() === '') {
+    throw new Error('entrypoint: the Nacos settings entry is required and must declare deployment.database')
+  }
   const { parse } = await import(YAML_MODULE)
-  const deployment = parse(content)?.deployment
-  if (deployment === undefined || deployment === null) return fallback
-
-  const declaredName = deployment.appName
-  const appName = typeof declaredName === 'string' && declaredName.trim() !== ''
-    ? declaredName.trim()
-    : fallback.appName
-  if (appName !== fallback.appName || typeof declaredName === 'string') {
-    console.log(`entrypoint: deployment.appName = ${appName} (from the settings entry)`)
-  }
-
-  // Only a field the entry actually declares is published. Writing an empty
-  // value for an absent one would override the container's environment with
-  // nothing, which is the opposite of a fallback.
-  const database = {}
-  for (const field of Object.keys(DATABASE_ENV)) {
-    const value = deployment.database?.[field]
-    if (value === undefined || value === null || String(value).trim() === '') continue
-    database[field] = String(value).trim()
-  }
-  if (Object.keys(database).length > 0) {
-    // The password is deliberately not among the names logged.
-    console.log(`entrypoint: deployment.database declares ${Object.keys(database).join(', ')}`)
-  }
-  return { appName, database }
+  return resolveDeploymentDocument(parse(content))
 }
 
 /**
@@ -208,7 +139,7 @@ async function resolveDeployment(content) {
  *
  * The entrypoint sources this file before `exec`, because a variable this
  * script sets cannot reach a sibling process: the harness reads `DSH_APP_NAME`
- * and the `DSH_MYSQL_*` fields through the `!!js` expressions in its
+ * and `DSH_DATABASE_SECRET` through the `!!js` expressions in its
  * composition, so the values have to be in the environment rather than passed
  * as arguments.
  *
@@ -216,13 +147,11 @@ async function resolveDeployment(content) {
  * tmpfs the container discards on stop, and is read by exactly one shell.
  * @param resolved - the application name and declared database fields.
  */
-function publishResolvedEnv({ appName, database }) {
-  const lines = [`export DSH_APP_NAME=${JSON.stringify(appName)}`]
-  for (const [field, variable] of Object.entries(DATABASE_ENV)) {
-    if (database[field] === undefined) continue
-    lines.push(`export ${variable}=${JSON.stringify(database[field])}`)
-  }
-  writeFileSync(ENV_FILE, `${lines.join('\n')}\n`)
+function publishResolvedEnv(resolved) {
+  const values = deploymentEnvironment(resolved)
+  Object.assign(process.env, values)
+  writeFileSync(ENV_FILE, environmentScript(values), { mode: 0o600 })
+  chmodSync(ENV_FILE, 0o600)
 }
 
 /**
@@ -375,9 +304,8 @@ function rememberRoster(packages) {
 const SETTINGS_DATA_ID = process.env.DSH_NACOS_SETTINGS_DATA_ID ?? 'dsh-settings.yaml'
 const ROSTER_DATA_ID = process.env.DSH_NACOS_PLUGINS_DATA_ID ?? 'dsh-plugin-roster.yml'
 
-ensureProfile()
-selectContainerBundle()
-
 const entries = await readNacosEntries([SETTINGS_DATA_ID, ROSTER_DATA_ID])
 publishResolvedEnv(await resolveDeployment(entries[SETTINGS_DATA_ID]))
+ensureProfile()
+selectContainerBundle()
 installRoster(await parseRoster(entries[ROSTER_DATA_ID], ROSTER_DATA_ID))

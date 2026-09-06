@@ -1,164 +1,113 @@
 ---
-description: "Operator guide for the containerized DeepSeek Harness deployment: what is configured where, how to run the stack, and how to change a running deployment without redeploying."
+description: "OceanBase and Nacos container deployment, required database configuration, audit columns, and trusted platform user isolation."
 kind: "deployment-reference"
 ---
 
-# Containerized deployment
+# Containerized Deployment
 
-This directory deploys DeepSeek Harness as a container that owns **no writable
-volume**. Every path the harness would normally keep under `$DSH_HOME` is served
-by one of two backing services, so a replaced container starts clean and loses
-nothing.
+English | [中文](README.zh.md)
 
-## The configuration split
+## Summary
 
-The deployment answers one question before any other: does a value have to be
-readable *before* a remote configuration source can be contacted?
+The root [Dockerfile](../Dockerfile) builds the Web application. OceanBase in MySQL mode holds session logs, shared KV state, and attachments; Nacos holds deployment settings and model credentials. The container validates its database configuration before starting the `dsh` profile. The existing database is not automatically migrated.
 
-- **Yes → static.** It ships with the image in
-  [`packages/bundle/docker/cordis.patch.yml`](../packages/bundle/docker/cordis.patch.yml).
-  The bind address, the Nacos coordinates, and the database URL are all in this
-  class, because reading them from Nacos would be circular.
-- **No → live.** It lives in Nacos and reaches a running container within
-  seconds, with no restart and no redeploy.
+## Contents
 
-| Class | Holds | Where | Changing it |
-|---|---|---|---|
-| Static | bind host/port, access gates, Nacos + OceanBase/MySQL coordinates, which plugins are mounted | `cordis.patch.yml` in the image | rebuild and redeploy |
-| Live | model routes and every user-settings namespace | Nacos `dsh-settings.yaml` | edit in the Nacos console |
-| Live | API keys and authorization grants | Nacos `dsh-credentials.yaml` | edit in the Nacos console |
-| Live | application name, plugin roster | Nacos `dsh-settings.yaml` / `dsh-plugin-roster.yml` | restart the container |
+- [Database Configuration](#database-configuration)
+- [User Isolation](#user-isolation)
+- [Schema](#schema)
+- [Deployment](#deployment)
+- [Configuration Updates](#configuration-updates)
+- [Operational Limits](#operational-limits)
 
-## Durable state
+<a id="database-configuration"></a>
+## Database Configuration
 
-[`schema-mysql.sql`](schema-mysql.sql) holds the DDL for every table below, for a deployment whose
-database role owns no DDL rights. The plugins check `information_schema` first and
-skip their creates when every table is already there, so a DBA-provisioned schema
-needs no privilege grant beyond SELECT/INSERT/UPDATE/DELETE.
+Create `dsh-settings.yaml` in the application's Nacos namespace and `DEFAULT_GROUP`. Database configuration comes exclusively from `deployment.database`; `DSH_MYSQL_*` variables are not read. Supply either the complete individual fields below or `url` with `poolSize` and `snowflakeWorkerId`, never both connection forms. Password bytes are preserved, including spaces and shell punctuation.
 
-| State | Backend | Table |
-|---|---|---|
-| Session event logs | OceanBase (MySQL mode) | `dsh_session`, `dsh_session_event` |
-| `ctx.storage` documents | OceanBase (MySQL mode) | `dsh_kv_unit`, `dsh_kv_record`, `dsh_kv_global` |
-| Attachment images | OceanBase (MySQL mode) | `dsh_attachment_object` |
-| User settings | Nacos | `dsh-settings.yaml` |
-| Credentials | Nacos | `dsh-credentials.yaml` |
+```yaml
+deployment:
+  appName: order-svc
+  database:
+    host: oceanbase
+    port: 2881
+    database: dsh
+    user: root@test
+    password: dsh
+    poolSize: 10
+    snowflakeWorkerId: 0
+```
 
-Derived model-request image variants deliberately stay on the container's own
-filesystem: each is a deterministic function of (reference, route policy), so a
-replaced container regenerates identical bytes. Only what cannot be recomputed
-is made durable.
+These credentials are for the supplied local development stack. Use a dedicated database account for production. All fields in this example are required when using individual connection fields. A missing entry, unreachable Nacos server, invalid field, or incomplete database configuration stops startup before the application opens a pool. Database changes take effect after a container restart.
 
-## Run it
+Nacos bootstrap credentials are centralized in `NACOS_AUTH` in [deployment-config.mjs](deployment-config.mjs), with the local-development example `nacos/nacos`. They are not read from operator environment variables. Do not commit real production credentials. The supplied local Nacos service has authentication disabled; setting client credentials alone does not enable server authentication.
+
+The bootstrap writes validated values into a mode-0600 file under `/run`. Compose mounts `/run` as temporary memory. `DSH_DATABASE_SECRET` is internal transport for the already-read Nacos document, not a second configuration source; its secret-marked name also excludes it from tool subprocess environments.
+
+<a id="user-isolation"></a>
+## User Isolation
+
+The container's Connection configuration trusts `X-User-Id`. A platform gateway must authenticate users, replace incoming client-supplied identity headers, and forward the resulting header on both HTTP requests and WebSocket upgrades. Do not expose the harness port directly to untrusted clients: possession of an arbitrary header is not authentication.
+
+User IDs are case-sensitive and limited to 32 characters. Missing or empty information uses `-`; all anonymous clients intentionally share that owner's sessions. Invalid or ambiguous headers are rejected. The identity is persisted in the session header and `user_id` columns, and inherited by forks and delegated child sessions.
+
+Lists, search, history, direct session actions, attachment reads, workspace session IDs, and session event/control streams enforce the requesting user's ownership. Guessing another user's session ID does not grant access. A WebSocket retains the identity admitted during its upgrade; the gateway must close existing connections when changing the authenticated account.
+
+This is session-data isolation. Application settings, workspace registrations, filesystem access, shell execution, administrator plugins, and unscoped Host maintenance are not tenant sandboxes. Those capabilities require separate platform authorization or isolated execution environments.
+
+<a id="schema"></a>
+## Schema
+
+[schema-mysql.sql](schema-mysql.sql) is the DBA provisioning script for the six `dsh_` tables. Every table has a signed `BIGINT id` generated as a Snowflake and these fields:
+
+```sql
+is_deleted   char(1)     NOT NULL DEFAULT 'N' COMMENT '是否删除，默认N',
+creator      varchar(32) NOT NULL COMMENT '创建者',
+gmt_created  datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+modifier     varchar(32) NOT NULL COMMENT '更新者',
+gmt_modified datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间'
+```
+
+Every insert explicitly supplies the audit columns. Updates preserve creation provenance and row identity while recording the modifier and modification time. Logical uniqueness remains enforced independently of the numeric primary key. `dsh_session.session_id` retains the existing conversation identifier. Session and attachment records also store `user_id`; shared KV units remain application-owned. Binary collation prevents case-folded application or user collisions.
+
+KV deletion is a soft delete; a later upsert restores the row. Session and attachment reads ignore soft-deleted rows. There is no automatic retention policy. Snowflake values are passed as decimal strings, without conversion through JavaScript numbers. Each concurrently running replica sharing tables needs a distinct `snowflakeWorkerId` from 0 through 1023 and a synchronized system clock.
+
+Providers inspect existing tables without requiring DDL permissions. Missing tables can be created by a privileged role; incompatible existing tables cause an explicit startup error. Back up the old database and perform an operator-reviewed conversion or provision a new database before changing the Nacos database name. Re-running `CREATE TABLE IF NOT EXISTS` does not upgrade an old table.
+
+<a id="deployment"></a>
+## Deployment
+
+The build context is the repository root. [docker-compose.yml](docker-compose.yml) points to the root Dockerfile and defines the application, Nacos, and OceanBase services. Start the backing services, provision the current schema, and create the required Nacos settings before starting the application.
 
 ```sh
+docker compose -f deploy/docker-compose.yml up -d oceanbase nacos
 DSH_CLIENT_COMMIT_HASH=$(git rev-parse HEAD) \
-  docker compose -f deploy/docker-compose.yml up -d --build
+  docker compose -f deploy/docker-compose.yml up -d --build dsh
 ```
 
-The commit hash is passed explicitly because the build context excludes `.git`;
-the repository's own `repositoryCommitHash` reads that variable before shelling
-out to git.
+The Web application listens on port 3080. The local Nacos console uses 8080, its API uses 8848, and its client gRPC endpoint uses 9848. OceanBase uses 2881. The supplied Compose configuration selects the `order-svc` Nacos namespace; create that namespace or set `DSH_NACOS_NAMESPACE` to an existing one.
 
-| Service | Port | Purpose |
+The default runtime base is `node:24-bookworm-slim`. When only the full Node 24 image is cached, the build accepts `--build-arg RUNTIME_BASE_IMAGE=node:24-bookworm` without changing the application or database configuration.
+
+Only Nacos coordinates, entry names, the application listen port, and optional plugin-install settings remain operator environment inputs. Database credentials and connection options are not Compose application environment fields. Model API keys belong in `dsh-credentials.yaml`; inherited model-key environment variables retain their existing read-only precedence.
+
+<a id="configuration-updates"></a>
+## Configuration Updates
+
+| Nacos Entry | Purpose | Activation |
 |---|---|---|
-| `dsh` | 3080 | the harness Web UI and `/api` |
-| `nacos` | 8848 / 9848 / 8080 | config API / its derived gRPC port / the console |
-| `oceanbase` | 2881 | OceanBase (MySQL mode), reached over the compose network |
+| `dsh-settings.yaml` | `deployment` plus model and application settings | Database and application name require restart; supported settings update live |
+| `dsh-credentials.yaml` | Model API keys and authorization grants | Live |
+| `dsh-plugin-roster.yml` | Plugin package specifications and optional registry/token | Restart installs or removes roster-owned packages |
+| `dsh-plugins.yml` | Patch for installed plugins | Live profile reload |
+| `dsh-agents.md` | User-global instructions | Mirrored to the Harness home |
 
-Nacos 3.x serves its console on **8080**, not on 8848 as 2.x did.
+The application owns its Nacos namespace; `appName` separates its database rows from other applications. Renaming it selects another row set, not a data migration. `DSH_PLUGINS` still contributes optional package specifications alongside the Nacos roster. Installing new plugin packages requires restart because module resolution happens at profile composition.
 
-## Access control
+<a id="operational-limits"></a>
+## Operational Limits
 
-The container binds every interface and **both request gates are open**: any
-client that can reach the published port drives an agent with shell access.
-There is no authentication in front of it.
-
-Publish port 3080 only onto a network that already answers for access. To close
-it again, set `requireAuth: true` and drop `allowAnyHost` in the bundle patch's
-`connection` row; the harness then requires its browser-session token and
-accepts only the authorities listed in `trustedHosts`.
-
-## Change a running deployment
-
-**Settings and credentials.** Edit `dsh-settings.yaml` or
-`dsh-credentials.yaml` in the Nacos console. The container holds a gRPC
-subscription and applies the change within seconds — no restart. The inherited
-process environment still outranks the stored credential document, so a key
-supplied through the container's environment stays authoritative and a write
-beneath it is refused rather than silently ignored.
-
-**Plugins.** Declare the roster in the Nacos entry `dsh-plugin-roster.yml` and
-restart the container:
-
-```yaml
-registry: https://npm.internal.example.com/
-packages:
-  - dsh-plugin-example@1.2.0
-  - '@acme/dsh-internal-tools'
-```
-
-Each spec is installed into the profile from `registry` (else `DSH_NPM_REGISTRY`,
-else pnpm's default). A package declaring `dsh.bundle` also becomes an active
-configuration layer; one that does not is installed as a plain dependency and
-says so in the log.
-
-The roster is declarative for the packages it installs: dropping a line
-uninstalls that package on the next start. Only packages a previous start
-installed from the roster are removed — one an operator added by hand with
-`dsh plugin add` is left alone.
-
-`DSH_PLUGINS` still works and is merged with the entry, for a deployment that
-pins its plugins to the image's environment rather than to Nacos:
-
-```yaml
-environment:
-  DSH_PLUGINS: 'dsh-plugin-example@1.2.0 @acme/dsh-internal-tools'
-```
-
-**A roster change needs a restart, and that is not a limitation of the entry.**
-The Loader resolves a profile's modules once, at composition: a package
-installed into a running process is not mountable by it, however the mount is
-requested. The install therefore runs in the entrypoint, before the harness
-starts. What Nacos buys is central editing — no redeploy, no environment change,
-one entry per application — not a restart-free install.
-
-Mounting is a different matter and IS live: for a package already installed,
-`dsh-plugins.yml` mounts, unmounts, disables, and reconfigures it without a
-restart. Do not `insert` a package that already declares its own `dsh.bundle` —
-it would mount twice, and a plugin holding a named resource fails the second
-time.
-
-**Anything static.** Edit the bundle patch, rebuild, redeploy.
-
-## Environment
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `DSH_PORT` | `3080` | listen port inside the container |
-| `DSH_APP_NAME` | `dsh` | fallback application name; the settings entry's `deployment.appName` wins |
-| `DSH_NACOS_HOST` / `DSH_NACOS_PORT` | `nacos` / `8848` | Nacos address; the gRPC port is derived |
-| `DSH_NACOS_NAMESPACE` / `DSH_NACOS_GROUP` | `` / `DEFAULT_GROUP` | Nacos namespace and group |
-| `DSH_NACOS_SETTINGS_DATA_ID` | `dsh-settings.yaml` | settings entry |
-| `DSH_NACOS_CREDENTIALS_DATA_ID` | `dsh-credentials.yaml` | credentials entry |
-| `DSH_NACOS_USERNAME` / `DSH_NACOS_PASSWORD` | unset | Nacos auth, when enabled |
-| `DSH_MYSQL_URL` | unset | full connection string; wins over the discrete fields |
-| `DSH_MYSQL_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `oceanbase` / `2881` / `dsh` / `root` / unset | discrete connection fields; credentials may instead come from Nacos `deployment.database` |
-| `DSH_PLUGINS` | empty | plugin specs installed at start, merged with the Nacos roster |
-| `DSH_NACOS_PLUGINS_DATA_ID` | `dsh-plugin-roster.yml` | roster entry |
-| `DSH_NPM_REGISTRY` | unset | registry used when the roster entry names none |
-
-- [Configuration guide (zh)](CONFIGURATION-GUIDE.zh.md) — step-by-step setup, every Nacos entry with a worked example, multi-application deployment, plugin publishing, and troubleshooting.
-
-## Operational notes
-
-- **Nacos 3.x requires `NACOS_AUTH_TOKEN`** to be a Base64 string even when
-  auth is disabled; the server exits at startup without it.
-- **The credentials entry holds secrets.** Scope its Nacos namespace to this
-  deployment.
-- **The database is the single source of truth for sessions.** Several replicas
-  may share one database; each keeps its own derived variant cache.
-- **Several applications share one database, but each owns its Nacos.** Every entry is named the same in every deployment, so an application built on this image makes no naming decision; its own Nacos (namespace or server) is what separates its configuration. The database is the shared backend, and every table uses the leading `app` column to isolate rows. Set the application name in `deployment.appName`; it is stored verbatim, so `order-svc` and `Order Service` are different values. All six tables are shared and use the `dsh_` prefix.
-- **Renaming an application does not migrate it.** A changed `deployment.appName` points the container at a different set of rows on its next start; previous rows remain under the old value. The name is read once at start, when each MySQL plugin opens its pool.
-- **`prepare-profile.mjs` runs before the harness** and is idempotent: a
-  restarted container with an unchanged roster converges on the same profile.
+- Nacos settings and credentials contain secrets. Restrict their namespace and enable server authentication for non-development deployments.
+- Source-embedded example Nacos credentials are not a secret-management mechanism. A production credential must be provided through a deployment-specific secure build or an approved secret-injection design.
+- Session persistence shares durable history, but live Agents and jobs remain process-local. This change does not implement distributed session execution or an authenticated multi-tenant shell sandbox.
+- The original database and configuration backups must be retained until the new deployment and rollback procedure are verified.

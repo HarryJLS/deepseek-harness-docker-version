@@ -10,6 +10,8 @@ English | [中文](README.zh.md)
 
 `@deepseek-ai/dsh-api-session-controller` owns the Host `ctx.sessionController` service and the generated Client `session`, `skills`, and `fileReferences` Remote namespaces. It serves Session lifecycle and history, the Host-generation model catalog, workspace-path opening, user-invocable skill discovery, and the adapter for Agent-scoped file references. Use it through API Gateway when a Client needs operations addressed by a Session.
 
+User-scoped requests see only their own live or persisted sessions. Direct history, attachments, Agent actions, explicit-id adoption, and control streams enforce the same ownership check; an inaccessible identity reports not found. Create records the request user and fork preserves the source owner. [User identity](../../identity/user-context/README.md) defines the anonymous `-` owner and trusted Host maintenance.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

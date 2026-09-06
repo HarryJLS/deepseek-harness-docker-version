@@ -7,3 +7,6 @@
 **/coverage
 deploy/testplugin
 *.log
+**/.env
+**/.env.*
+!**/.env.example

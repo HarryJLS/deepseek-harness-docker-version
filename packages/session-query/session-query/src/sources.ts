@@ -1,6 +1,7 @@
 /** Shared immutable-header checks for logical session source observers. */
 
 import type { SessionHeader } from '@deepseek-ai/dsh-session'
+import { canAccessUser, DEFAULT_USER_ID } from '@deepseek-ai/dsh-user-context'
 import { SessionQueryError } from './config.ts'
 
 /**
@@ -13,6 +14,7 @@ export function assertSessionHeadersCompatible(a: SessionHeader, b: SessionHeade
     a.version !== b.version
     || a.id !== b.id
     || a.createdAt !== b.createdAt
+    || (a.userId ?? DEFAULT_USER_ID) !== (b.userId ?? DEFAULT_USER_ID)
     || a.cwd !== b.cwd
     || a.parentSession !== b.parentSession
     || a.seedLength !== b.seedLength
@@ -22,5 +24,16 @@ export function assertSessionHeadersCompatible(a: SessionHeader, b: SessionHeade
       `session source headers conflict for session "${a.id}"`,
       'SESSION_QUERY_SOURCE_CONFLICT',
     )
+  }
+}
+
+/**
+ * Refuse another user's session before reading or projecting its events.
+ * @param header - immutable session metadata from memory or persistence.
+ * @throws the same not-found failure as an absent session, without disclosing its owner.
+ */
+export function assertSessionUser(header: SessionHeader): void {
+  if (!canAccessUser(header.userId)) {
+    throw new SessionQueryError(`session "${header.id}" not found`, 'SESSION_QUERY_SESSION_NOT_FOUND')
   }
 }

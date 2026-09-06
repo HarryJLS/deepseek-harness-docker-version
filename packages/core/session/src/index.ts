@@ -15,6 +15,7 @@ import type { Message } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION, SessionId } from './types.ts'
 import type { TypertLookup } from '@deepseek-ai/dsh-typert-protocol'
 import type { CreateSessionOptions, EpochHeader, PrepareSessionOptions, RequestContext, SessionEvent, SessionEventMap, SessionEventType, SessionHeader, SurfaceIntent, SurfaceEventType } from './types.ts'
+import { parseUserId } from '@deepseek-ai/dsh-user-context/identity'
 import { snapshotJsonValue } from './json.ts'
 import { deriveEventMessage, SurfaceManager } from './surface.ts'
 import type { SessionSurface } from './surface.ts'
@@ -114,6 +115,9 @@ function validateSessionHeader(id: SessionId, input: unknown): SessionHeader {
     if (!isAbsolute(record.cwd)) {
       throw new Error(`session header cwd must be an absolute path, got "${record.cwd}"`)
     }
+  }
+  if (record.userId !== undefined && parseUserId(record.userId) !== record.userId) {
+    throw new Error('session header userId must be a nonempty user identifier')
   }
   if (record.parentSession !== undefined && typeof record.parentSession !== 'string') {
     throw new Error('session header parentSession must be a string')
@@ -876,6 +880,7 @@ export class SessionStore extends Service {
       version: SESSION_FORMAT_VERSION,
       id: sessionId,
       createdAt: meta?.createdAt ?? Date.now(),
+      ...meta?.userId === undefined ? {} : { userId: meta.userId },
       ...meta?.cwd === undefined ? {} : { cwd: meta.cwd },
       ...meta?.parentSession === undefined ? {} : { parentSession: meta.parentSession },
       ...meta?.seedLength === undefined ? {} : { seedLength: meta.seedLength },
@@ -1086,6 +1091,7 @@ export class SessionStore extends Service {
       seed,
       meta: {
         ...liveSource.header.cwd !== undefined ? { cwd: liveSource.header.cwd } : {},
+        ...liveSource.header.userId !== undefined ? { userId: liveSource.header.userId } : {},
         parentSession: liveSource.id,
         seedLength: seed.length,
       },

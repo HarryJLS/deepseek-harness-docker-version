@@ -1,6 +1,7 @@
 /** Host registry and HTTP adapter for generic Connection RPC channels. */
 
 import { Context, Service } from '@deepseek-ai/cordis'
+import { parseUserId, withUser, type UserId } from '@deepseek-ai/dsh-user-context'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import {
   RpcId,
@@ -48,6 +49,8 @@ interface RegisteredFetchRoute {
  * leave them there.
  */
 export interface ConnectionAccess {
+  /** Header injected by a trusted authenticating proxy; absent disables platform identities. */
+  readonly userIdHeader?: string
   /** Accept every Host authority instead of loopback plus `trustedHosts`. */
   readonly allowAnyHost: boolean
   /** Require a browser session (process token or signed cookie) on every `/api` request. */
@@ -109,8 +112,18 @@ export class HostConnectionService extends Service implements HostConnectionHand
   /** Apply the configured Host/Origin fence, then browser authentication. */
   requestRejection(request: ConnectionTrustRequest): ConnectionRequestRejection {
     if (!isTrustedApiRequest(request, this.trustedHosts, this.access.allowAnyHost)) return 403
+    try { this.userId(request) }
+    catch { return 403 }
     if (!this.access.requireAuth) return undefined
     return this.browserAuth.isAuthenticated(request) ? undefined : 401
+  }
+
+  userId(request: ConnectionTrustRequest): UserId {
+    const name = this.access.userIdHeader
+    const value = name === undefined ? undefined : request.headers instanceof Headers
+      ? request.headers.get(name)
+      : request.headers[name]
+    return parseUserId(value)
   }
 
   /** Authenticate an index request through the process-token exchange or cookie. */
@@ -138,7 +151,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
     channel: '/api',
   ): ConnectionFetchHandler {
     return {
-      fetch: (request) => {
+      fetch: request => withUser(this.userId(request), () => {
         const pathname = new URL(request.url).pathname
         const route = this.fetchRoutes.get(pathname)
         if (route?.methods.has(request.method) === true) return route.fetch(request)
@@ -148,7 +161,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
           return Promise.resolve(new Response('not found', { status: 404 }))
         }
         return interceptor.fetchHandler.fetch(request)
-      },
+      }),
     }
   }
 
@@ -187,7 +200,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
           res.end(rejection === 401 ? 'unauthorized' : 'forbidden')
           return
         }
-        await bridge(req, res, fetchHandler)
+        await withUser(this.userId(req), () => bridge(req, res, fetchHandler))
       },
     }
     return owner.effect(

@@ -32,6 +32,7 @@ import {
   type BorrowedSessionSource,
   PersistenceCoordinator,
   SessionPersistence,
+  SessionPersistenceNotFoundError,
   type SessionInspection,
   type SessionLocation,
   type SessionPersistenceSnapshot,
@@ -43,6 +44,7 @@ import {
   resolveMysqlPool,
 } from '@deepseek-ai/dsh-mysql-schema'
 import type { MysqlConnectionConfig } from '@deepseek-ai/dsh-mysql-schema'
+import { canAccessUser } from '@deepseek-ai/dsh-user-context'
 import { MysqlSessionStore } from './store.ts'
 
 export { MYSQL_SESSION_READ_PAGE_SIZE, MysqlSessionStore } from './store.ts'
@@ -82,6 +84,7 @@ export class MysqlSessionPersistence extends SessionPersistence {
       mysql.createPool(resolveMysqlPool(config)),
       app,
       resolveMysqlDatabase(config),
+      config.snowflakeWorkerId ?? 0,
     )
     this.coordinator = new PersistenceCoordinator(this.ctx, this.store, {
       preparedSessionCacheSize: config.preparedSessionCacheSize ?? DEFAULT_PREPARED_SESSION_CACHE_SIZE,
@@ -100,10 +103,12 @@ export class MysqlSessionPersistence extends SessionPersistence {
   }
 
   create(meta: SessionHeader): Promise<void> {
+    this.assertUser(meta)
     return this.coordinator.create(meta)
   }
 
   override ensureMaterialized(session: Session): Promise<void> {
+    this.assertUser(session.header)
     return this.coordinator.ensureMaterialized(session)
   }
 
@@ -111,28 +116,40 @@ export class MysqlSessionPersistence extends SessionPersistence {
     return this.coordinator.append(id, events)
   }
 
-  override prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation> {
-    return this.coordinator.prepare(id, signal)
+  override async prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation> {
+    const prepared = await this.coordinator.prepare(id, signal)
+    try { this.assertUser(prepared.session.header) }
+    catch (error) { prepared[Symbol.dispose](); throw error }
+    return prepared
   }
 
-  load(id: SessionId): Promise<SessionInspection> {
-    return this.coordinator.load(id)
+  async load(id: SessionId): Promise<SessionInspection> {
+    const inspection = await this.coordinator.load(id)
+    this.assertUser(inspection.meta)
+    return inspection
   }
 
-  inspect(id: SessionId, signal?: AbortSignal): Promise<SessionInspection> {
-    return this.coordinator.inspect(id, signal)
+  async inspect(id: SessionId, signal?: AbortSignal): Promise<SessionInspection> {
+    const inspection = await this.coordinator.inspect(id, signal)
+    this.assertUser(inspection.meta)
+    return inspection
   }
 
-  override borrowSession(id: SessionId, signal?: AbortSignal): Promise<BorrowedSessionSource> {
-    return this.coordinator.borrowSession(id, signal)
+  override async borrowSession(id: SessionId, signal?: AbortSignal): Promise<BorrowedSessionSource> {
+    const borrowed = await this.coordinator.borrowSession(id, signal)
+    try { this.assertUser(borrowed.inspection.meta) }
+    catch (error) { borrowed[Symbol.dispose](); throw error }
+    return borrowed
   }
 
-  readFrom(
+  async readFrom(
     id: SessionId,
     fromSeq: number,
     signal?: AbortSignal,
   ): Promise<{ meta: SessionHeader; events: SessionEvent[] }> {
-    return this.coordinator.readFrom(id, fromSeq, signal)
+    const inspection = await this.coordinator.readFrom(id, fromSeq, signal)
+    this.assertUser(inspection.meta)
+    return inspection
   }
 
   list(signal?: AbortSignal): Promise<SessionHeader[]> {
@@ -141,6 +158,10 @@ export class MysqlSessionPersistence extends SessionPersistence {
 
   listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot[]> {
     return this.store.listSnapshots(signal)
+  }
+
+  private assertUser(meta: SessionHeader): void {
+    if (!canAccessUser(meta.userId)) throw new SessionPersistenceNotFoundError(meta.id)
   }
 }
 

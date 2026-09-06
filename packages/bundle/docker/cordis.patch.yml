@@ -63,6 +63,7 @@
     trustedHosts: !!js ctx.webRuntime.trustedHosts
     allowAnyHost: true
     requireAuth: false
+    userIdHeader: x-user-id
 
 # ── live configuration: Nacos ──────────────────────────────────────────────
 #
@@ -102,15 +103,8 @@
 - insert:
     - id: storage-mysql
       name: '@deepseek-ai/dsh-storage-mysql'
-      config:
-        name: mysql
-        url: !!js process.env.DSH_MYSQL_URL
-        host: !!js process.env.DSH_MYSQL_HOST ?? 'oceanbase'
-        port: !!js Number(process.env.DSH_MYSQL_PORT ?? 2881)
-        database: !!js process.env.DSH_MYSQL_DB ?? 'dsh'
-        user: !!js process.env.DSH_MYSQL_USER ?? 'root'
-        password: !!js process.env.DSH_MYSQL_PASSWORD
-        app: !!js process.env.DSH_APP_NAME ?? 'dsh'
+      config: !!js |
+        ({ ...JSON.parse(process.env.DSH_DATABASE_SECRET), app: process.env.DSH_APP_NAME, name: 'mysql' })
 
 - id: storage-domain
   config:
@@ -133,14 +127,8 @@
 - insert:
     - id: session-persistence-mysql
       name: '@deepseek-ai/dsh-session-persistence-mysql'
-      config:
-        url: !!js process.env.DSH_MYSQL_URL
-        host: !!js process.env.DSH_MYSQL_HOST ?? 'oceanbase'
-        port: !!js Number(process.env.DSH_MYSQL_PORT ?? 2881)
-        database: !!js process.env.DSH_MYSQL_DB ?? 'dsh'
-        user: !!js process.env.DSH_MYSQL_USER ?? 'root'
-        password: !!js process.env.DSH_MYSQL_PASSWORD
-        app: !!js process.env.DSH_APP_NAME ?? 'dsh'
+      config: !!js |
+        ({ ...JSON.parse(process.env.DSH_DATABASE_SECRET), app: process.env.DSH_APP_NAME })
 
 # ── credentials: Nacos ─────────────────────────────────────────────────────
 #
@@ -180,14 +168,8 @@
 - insert:
     - id: attachment-mysql
       name: '@deepseek-ai/dsh-attachment-mysql'
-      config:
-        url: !!js process.env.DSH_MYSQL_URL
-        host: !!js process.env.DSH_MYSQL_HOST ?? 'oceanbase'
-        port: !!js Number(process.env.DSH_MYSQL_PORT ?? 2881)
-        database: !!js process.env.DSH_MYSQL_DB ?? 'dsh'
-        user: !!js process.env.DSH_MYSQL_USER ?? 'root'
-        password: !!js process.env.DSH_MYSQL_PASSWORD
-        app: !!js process.env.DSH_APP_NAME ?? 'dsh'
+      config: !!js |
+        ({ ...JSON.parse(process.env.DSH_DATABASE_SECRET), app: process.env.DSH_APP_NAME })
 
 # ── mirrored entries: Nacos to file ────────────────────────────────────────
 #

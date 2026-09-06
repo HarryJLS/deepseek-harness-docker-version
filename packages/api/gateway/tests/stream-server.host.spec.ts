@@ -2,6 +2,7 @@ import { once } from 'node:events'
 import { createServer, type Server } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
+import { currentUserId, parseUserId, withUser } from '@deepseek-ai/dsh-user-context'
 import {
   RemoteStreamMuxServer,
   type RemoteStreamFailureMapper,
@@ -25,6 +26,30 @@ afterEach(async () => {
 })
 
 describe('Remote stream mux server carrier lifecycle', () => {
+  it('retains the upgrade identity across interleaved socket messages and lazy iteration', async () => {
+    async function* identity() {
+      await new Promise(resolve => setImmediate(resolve))
+      yield { userId: currentUserId() }
+    }
+    const entry = await startMux(async () => identity(), 30000, true)
+    const clients = await Promise.all(['alice', 'bob'].map(async (userId) => {
+      const client = new WebSocket(entry.url, { headers: { 'x-user-id': userId } })
+      await once(client, 'open')
+      return client
+    }))
+    try {
+      const frames = clients.map(client => once(client, 'message'))
+      for (const client of clients) client.send(openFrame('identity'))
+      const values = await Promise.all(frames)
+      expect(values.map((frame) => {
+        const decoded = JSON.parse(String(frame[0])) as { value: unknown }
+        return decoded.value
+      })).toEqual([{ userId: 'alice' }, { userId: 'bob' }])
+    } finally {
+      await Promise.all(clients.map(async (client) => { client.close(); await once(client, 'close') }))
+    }
+  })
+
   it('sends WebSocket Ping control frames without application messages', async () => {
     const entry = await startMux(async (_endpoint, _payload, signal) => waitForAbort(signal), 20)
     const client = await connect(entry.url)
@@ -193,10 +218,13 @@ const mapFailure: RemoteStreamFailureMapper = error => ({
   details: {},
 })
 
-async function startMux(open: RemoteStreamOpener, heartbeatIntervalMs = 30_000): Promise<RunningMux> {
+async function startMux(open: RemoteStreamOpener, heartbeatIntervalMs = 30_000, userHeaders = false): Promise<RunningMux> {
   const mux = new RemoteStreamMuxServer(open, mapFailure, heartbeatIntervalMs)
   const http = createServer()
-  http.on('upgrade', (request, socket, head) => { mux.handleUpgrade(request, socket, head) })
+  http.on('upgrade', (request, socket, head) => {
+    if (userHeaders) withUser(parseUserId(request.headers['x-user-id']), () => { mux.handleUpgrade(request, socket, head) })
+    else mux.handleUpgrade(request, socket, head)
+  })
   await new Promise<void>((resolve, reject) => {
     http.once('error', reject)
     http.listen(0, '127.0.0.1', () => {

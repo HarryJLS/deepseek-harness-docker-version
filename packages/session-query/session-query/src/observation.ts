@@ -9,6 +9,7 @@ import type {
 import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-projection-cache'
 import { SessionQueryError } from './config.ts'
+import { assertSessionUser } from './sources.ts'
 
 /** One exact immutable Session cut retained for the caller's read lifetime. */
 export interface SessionObservation extends Disposable {
@@ -84,6 +85,7 @@ export class SessionObservationReader {
 
       try {
         throwIfObservationAborted(signal)
+        assertSessionUser(borrowed.inspection.meta)
         if (borrowed.inspection.meta.id !== sessionId) {
           throw new SessionQueryError(
             `session persistence returned "${borrowed.inspection.meta.id}" for "${sessionId}"`,
@@ -151,6 +153,7 @@ export class SessionObservationReader {
     session: Session,
     projectionMode: NonNullable<SessionObservationOptions['projectionMode']>,
   ): SessionObservation {
+    assertSessionUser(session.header)
     const events = Object.freeze([...session.events])
     const projections = projectionMode === 'none'
       ? undefined

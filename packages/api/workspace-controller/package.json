@@ -70,7 +70,9 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "zod": "^4.4.3"
+    "@deepseek-ai/dsh-session-query": "workspace:^",
+    "zod": "^4.4.3",
+    "@deepseek-ai/dsh-user-context": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",

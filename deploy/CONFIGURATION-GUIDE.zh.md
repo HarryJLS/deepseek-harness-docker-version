@@ -24,18 +24,18 @@ kind: "deployment-guide"
 ## 1. 五分钟起一套栈
 
 ```sh
-docker compose -f deploy/docker-compose.yml up -d --build
+docker compose -f deploy/docker-compose.yml up -d oceanbase nacos
 ```
 
-三个服务起来后：
+先启动后端服务，并在应用的 Nacos 命名空间中完成第 4.1 节的数据库配置：
 
 | 服务 | 地址 | 用途 |
 |---|---|---|
 | dsh | http://localhost:3080 | harness 本体 |
 | Nacos 控制台 | http://localhost:8080 | 改实时配置 |
-| PostgreSQL | localhost:5432 | 会话与存储 |
+| OceanBase | localhost:2881 | MySQL 模式的会话与存储 |
 
-**此时还不能用** —— 没有 API key。最小可用配置只需一件事：在 Nacos 控制台新建配置
+模型 API key 在 Nacos 控制台单独配置：
 
 - Data ID：`dsh-credentials.yaml`
 - Group：`DEFAULT_GROUP`
@@ -47,7 +47,12 @@ refs:
 records: {}
 ```
 
-发布后 10 秒内生效，无需重启。打开 http://localhost:3080 即可对话。
+数据库配置和模型凭据齐全后，构建并启动应用。根目录的 [Dockerfile](../Dockerfile) 是构建入口；Nacos 不可达或数据库字段缺失会阻止应用启动。
+
+```sh
+DSH_CLIENT_COMMIT_HASH=$(git rev-parse HEAD) \
+  docker compose -f deploy/docker-compose.yml up -d --build dsh
+```
 
 > 也可以用容器环境变量 `DEEPSEEK_API_KEY` 注入。**环境变量优先且只读** —— 设了它，Nacos 里的同名 ref 会被遮蔽，且写入会被显式拒绝。
 
@@ -62,14 +67,14 @@ records: {}
 |---|---|
 | 监听地址端口 | 模型路由、默认模型 |
 | Nacos 自己的地址 | API key、授权凭据 |
-| 数据库连接串 | agent 循环参数、权限预设 |
+| Nacos 启动账号的源码配置 | agent 循环参数、权限预设 |
 | Nacos 命名空间 | 全局提示词 |
 | 能力接缝挂哪个实现 | 插件的挂载与配置 |
 
 静态的改法：改 `packages/bundle/docker/cordis.patch.yml` → 重建镜像 → 重新部署。
 实时的改法：Nacos 控制台改内容。
 
-**一个例外**：插件清单在 Nacos，但**改完要重启容器**。原因见 [7.4](#plugin-restart)。
+数据库配置全部来自 Nacos 的 `deployment.database`，修改后需要重启容器。插件清单也需要重启，原因见 [7.4](#plugin-restart)。
 
 -----
 
@@ -82,7 +87,6 @@ records: {}
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `DSH_APP_NAME` | `dsh` | 应用名的**兜底**值；settings 条目里的 `deployment.appName` 优先 |
 | `DSH_PORT` | `3080` | 容器内监听端口 |
 
 ### Nacos
@@ -93,18 +97,12 @@ records: {}
 | `DSH_NACOS_PORT` | `8848` | HTTP 端口 |
 | `DSH_NACOS_NAMESPACE` | 空（public） | 命名空间 id；凭证建议单独隔离 |
 | `DSH_NACOS_GROUP` | `DEFAULT_GROUP` | 配置分组 |
-| `DSH_NACOS_USERNAME` / `_PASSWORD` | 未设 | Nacos 开鉴权时用 |
 
-单节点 standalone 即可，不需要集群。
+Nacos 账号密码集中在 [deployment-config.mjs](deployment-config.mjs) 的 `NACOS_AUTH` 中，开发示例是 `nacos/nacos`，不从环境变量读取。本地 Compose 未开启 Nacos 鉴权；生产凭据不能提交到仓库。
 
-### PostgreSQL
+### OceanBase
 
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `DSH_POSTGRES_URL` | 未设 | 完整连接串；设了就忽略下面的分散字段 |
-| `DSH_POSTGRES_HOST` / `_PORT` | `postgres` / `5432` | 地址 |
-| `DSH_POSTGRES_DB` / `_USER` / `_PASSWORD` | `dsh` / `dsh` / 未设 | 库名与凭据 |
-| `DSH_POSTGRES_SCHEMA` | 由 `DSH_APP_NAME` 推导 | 精确指定 schema，覆盖推导结果 |
+数据库不接受环境变量回退。连接地址、端口、库名、账号、密码、连接池大小和雪花工作节点编号均在 Nacos 中声明；字段及校验规则见[数据库配置](README.md#database-configuration)。
 
 ### 插件
 
@@ -133,22 +131,30 @@ records: {}
 
 | Data ID | 管什么 | 生效 |
 |---|---|---|
-| `dsh-settings.yaml` | 应用身份 + 用户设置各命名空间 | 秒级 |
+| `dsh-settings.yaml` | 应用身份、数据库连接、用户设置 | 数据库与应用名需重启，其他设置按其声明生效 |
 | `dsh-credentials.yaml` | API key 与授权记录 | 秒级 |
 | `dsh-plugins.yml` | 插件挂载/禁用/改配置 | 秒级 |
 | `dsh-plugin-roster.yml` | 装哪些插件、从哪个仓库装 | **需重启** |
 | `dsh-agents.md` | 全局提示词 | 新会话 |
 
-### 4.1 `order-svc-settings.yaml` — 用户设置
+### 4.1 `dsh-settings.yaml` — 数据库与用户设置
 
 键是命名空间名，值是该命名空间的用户覆盖层。**只写要覆盖的**，没写的落回 schema 默认值。
 
-顶部的 `deployment` 不是设置命名空间，是这个部署的身份声明 —— entrypoint 在 harness 启动前读它，决定本应用的 PostgreSQL schema。界面写入是按命名空间读改写（`{ ...current, [ns]: section }`），所以这个键不会被冲掉。
+顶部的 `deployment` 不是设置命名空间；entrypoint 在 harness 启动前读取并校验它，确定数据库连接和 `app` 行隔离值。界面按设置命名空间更新内容，不覆盖 `deployment`。
 
 ```yaml
 # 应用身份。改了要重启容器：表打开后无法搬家。
 deployment:
   appName: order-svc
+  database:
+    host: oceanbase
+    port: 2881
+    database: dsh
+    user: root@test
+    password: dsh
+    poolSize: 10
+    snowflakeWorkerId: 0
 
 # 新会话默认用哪个模型
 agent-default-model:
@@ -197,7 +203,7 @@ llm-pi-ai:
 
 > 实例注册的命名空间不止这些（还有 `permission`、`shell`、`locale`、`ui-theme`、`web-search-deepseek`、`agent-presets` 等）。**各命名空间接受哪些字段以 UI 的设置页为准** —— 在设置页改一次，再回 Nacos 看条目变成什么样，是确认字段名最可靠的方式。乱填的键会被 schema 拒绝。
 
-### 4.2 `order-svc-credentials.yaml` — 凭证
+### 4.2 `dsh-credentials.yaml` — 凭证
 
 ```yaml
 # refs — 按环境变量名索引的密钥，供 LLM 适配器按名解析
@@ -217,7 +223,7 @@ records: {}
 
 > ⚠️ 本条目是明文，Nacos 不额外加密。放在**读权限受限的独立命名空间**，并给 Nacos 开鉴权。
 
-### 4.3 `order-svc-plugins.yml` — 插件补丁层（实时）
+### 4.3 `dsh-plugins.yml` — 插件补丁层（实时）
 
 被写到 profile 的 `cordis.patch.yml`，Loader 监听该文件，所以**改完无需重启**。内容是 Loader 的 patch 数组。
 
@@ -250,7 +256,7 @@ records: {}
 
 > ⚠️ **不要 `insert` 一个已经自带 `dsh.bundle` 的包** —— 它会被挂载两次；持有具名资源的插件第二次会报 `already-open`，容器起不来。
 
-### 4.4 `order-svc-plugin-roster.yml` — 插件清单（需重启）
+### 4.4 `dsh-plugin-roster.yml` — 插件清单（需重启）
 
 ```yaml
 # 私有仓库地址。不写则用 DSH_NPM_REGISTRY，再不写用 pnpm 默认源。
@@ -275,7 +281,7 @@ packages:
 
 配了 `token` 却没配 `registry` 会**直接报错拒绝启动** —— 因为这意味着运维以为有鉴权而实际不会发生，私有包会以一个没有原因的 404 失败。
 
-### 4.5 `order-svc-agents.md` — 全局提示词
+### 4.5 `dsh-agents.md` — 全局提示词
 
 纯 Markdown，被写到 `$DSH_HOME/AGENTS.md`，作为用户级全局指令注入**每个会话**的提示词。
 
@@ -305,9 +311,9 @@ packages:
 <a id="multi-app"></a>
 ## 5. 多应用共用一套基础设施
 
-一份基础镜像，多个应用，共用同一个 Nacos 和同一个 PostgreSQL。
+一份基础镜像可以服务多个应用，共用 Nacos 和 OceanBase。
 
-**Nacos 各自隔离，PostgreSQL 共用一个库。**因为库共用，唯一必须按应用区分的就是 schema。应用在自己的 `dsh-settings.yaml` 里声明名字（`deployment.appName`），部署描述里只写坐标：
+每个应用使用独立的 Nacos 命名空间，并在 `dsh-settings.yaml` 中声明 `deployment.appName` 和完整数据库连接。共用数据库时，`app` 区分应用，`user_id` 区分会话用户。所有共用表的进程必须使用不同的 `snowflakeWorkerId`。
 
 ```yaml
 services:
@@ -316,7 +322,6 @@ services:
     environment:
       DSH_NACOS_HOST: nacos
       DSH_NACOS_NAMESPACE: order-svc     # 这个应用自己的 Nacos 命名空间
-      DSH_POSTGRES_HOST: postgres
     ports: ['3080:3080']
 
   billing-svc:
@@ -324,27 +329,24 @@ services:
     environment:
       DSH_NACOS_HOST: nacos
       DSH_NACOS_NAMESPACE: billing-svc   # 只有这里不同
-      DSH_POSTGRES_HOST: postgres
     ports: ['3081:3080']
 ```
 
-应用名会自动折叠成合法的 schema 标识符：
+应用名作为值原样存储，不转换为数据库标识符：
 
-| `deployment.appName` | PG schema |
+| `deployment.appName` | `app` 列 |
 |---|---|
 | 未声明 | `dsh` |
-| `order-svc` | `order_svc` |
-| `Order Service` | `order_service` |
-| `2fa` | 拒绝启动 |
+| `order-svc` | `order-svc` |
+| `Order Service` | `Order Service` |
+| `2fa` | `2fa` |
 
-**必须隔离，不能共用 schema**：`kv_record` 的主键是 `(unit, tbl, key)`，不带应用维度。两个应用在同一 schema 里写同一个 unit 会互相覆盖。
-
-数字开头的名字（如 `2fa`）会被**拒绝而不是修复** —— 任何修复都可能把两个不同应用悄悄合并到一个 schema。
+平台网关必须在 HTTP 和 WebSocket 请求中注入可信的 `X-User-Id`。缺失用户信息时归入 `-`；会话列表、历史、附件与实时流均按用户隔离。请求头本身不是认证，不能允许公网客户端绕过网关直连应用。完整限制见[用户隔离](README.md#user-isolation)。
 
 其他注意：
 
-- 数据库角色需要 `CREATE` 权限，首次启动时建 schema。
-- **改 `deployment.appName` 不会迁移数据**：容器会指向一个空 schema，旧的原样留在那里。
+- DBA 可预建所有表，应用角色只需 DML 权限。
+- 修改 `deployment.appName` 只切换可见行集合，不迁移既有数据。
 
 -----
 
@@ -353,93 +355,32 @@ services:
 
 生产环境通常不给应用 DDL 权限 —— 表由 DBA 建好，应用角色只有增删改查。
 
-**`IF NOT EXISTS` 不豁免权限检查。** 无 DDL 权限的角色执行 `CREATE TABLE IF NOT EXISTS`，即使表已存在也会报 `permission denied for schema`。所以应用启动时会先查 `information_schema`：六张表齐全就完全跳过 DDL，缺任何一张才尝试创建。
+`IF NOT EXISTS` 不豁免建表权限检查。应用启动时先查 `information_schema`，表齐全时跳过 DDL，然后校验所需审计字段和雪花主键；旧结构会被明确拒绝。
 
 | 情况 | 结果 |
 |---|---|
 | 表已建好，角色无 DDL 权限 | 正常启动，跳过全部 DDL |
 | 表未建，角色有 DDL 权限 | 正常启动，自动建表 |
-| 表未建，角色无 DDL 权限 | **拒绝启动**，明确报 permission denied |
+| 表未建，角色无 DDL 权限 | 拒绝启动，报告权限错误 |
 
 最后一种是刻意的：带着不存在的表提供服务，会在第一次写入时才炸，那时已经有用户在用了。
 
 ### 建表脚本
 
-同样的内容在 [`deploy/schema.sql`](schema.sql)。把 `<schema>` 换成该应用的 schema 名，`<app_role>` 换成应用连接用的角色。
+由 DBA 执行 [schema-mysql.sql](schema-mysql.sql)。所有表都有雪花 `id` 主键和统一审计字段；原业务标识保留在唯一索引中，会话标识存放于 `session_id`。脚本中的数据库名可以按部署修改，但必须与 Nacos 配置一致。
 
-```sql
--- 生成自各 PostgreSQL 插件的建表语句，与代码保持一致。
--- DeepSeek Harness —— 应用所需的全部对象
--- 把 <schema> 换成该应用的 schema 名（由 deployment.appName 折叠而来：
--- order-svc -> order_svc）。每个应用一个 schema，不可共用。
-
-CREATE SCHEMA IF NOT EXISTS <schema>;
-
--- ── 会话 ──────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS <schema>.session (
-  id         text        PRIMARY KEY,
-  meta       jsonb       NOT NULL,
-  revision   bigint      NOT NULL DEFAULT 0,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS <schema>.session_event (
-  session_id text    NOT NULL
-    REFERENCES <schema>.session (id) ON DELETE CASCADE,
-  seq        integer NOT NULL,
-  event      jsonb   NOT NULL,
-  PRIMARY KEY (session_id, seq)
-);
-
-CREATE INDEX IF NOT EXISTS session_created_at_idx
-  ON <schema>.session (created_at);
-
--- ── 存储 ──────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS <schema>.kv_unit (
-  unit    text    PRIMARY KEY,
-  version integer NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS <schema>.kv_record (
-  unit  text  NOT NULL,
-  tbl   text  NOT NULL,
-  key   text  NOT NULL,
-  value jsonb NOT NULL,
-  PRIMARY KEY (unit, tbl, key)
-);
-
-CREATE TABLE IF NOT EXISTS <schema>.kv_global (
-  unit  text  PRIMARY KEY,
-  value jsonb NOT NULL
-);
-
--- ── 附件 ──────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS <schema>.attachment_object (
-  sha256     text        PRIMARY KEY,
-  media_type text        NOT NULL,
-  bytes      integer     NOT NULL,
-  width      integer     NOT NULL,
-  height     integer     NOT NULL,
-  data       bytea       NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-
--- ── 应用角色：只给 DML，不给 DDL ──────────────────────────────────────────
-GRANT USAGE ON SCHEMA <schema> TO <app_role>;
-GRANT SELECT, INSERT, UPDATE, DELETE
-  ON ALL TABLES IN SCHEMA <schema> TO <app_role>;
-```
+此脚本不升级旧表。更换结构前先备份，在新库转换数据并验证后再更新 Nacos 的数据库名；旧库保留用于回滚。[存储结构说明](README.md#schema) 定义字段、软删除和工作节点编号要求。
 
 ### 六张表存什么
 
 | 表 | 存什么 |
 |---|---|
-| `session` | 会话头。`revision` 每次写入递增，用于判断某副本持有的视图是否过期 |
-| `session_event` | 会话事件日志，一行一事件，按 `seq` 有序。可按 seq 寻址，投影从水位线恢复时只读后缀 |
-| `kv_unit` | 各存储单元的格式版本戳。版本不匹配会拒绝打开而非静默迁移 |
-| `kv_record` | 存储记录。当前使用者：会话投影缓存、工作区、消息反馈 |
-| `kv_global` | 各单元的全局单例槽 |
-| `attachment_object` | 归一化后的图片二进制，按内容寻址。去重靠主键冲突，无需额外逻辑 |
+| `dsh_session` | 会话头、用户归属与修订号 |
+| `dsh_session_event` | 会话事件日志，按 `seq` 有序 |
+| `dsh_kv_unit` | 存储单元的格式版本戳 |
+| `dsh_kv_record` | 应用范围的存储记录 |
+| `dsh_kv_global` | 各单元的全局槽 |
+| `dsh_attachment_object` | 归一化图片，按应用、用户与摘要去重 |
 
 **模型请求用的派生图片变体不落库**，留在容器本地临时目录。每个变体都是「引用 + 路由策略」的确定性函数，被替换的容器会重新生成完全相同的字节。判断原则：只有无法重算的东西才需要持久化。
 
@@ -566,7 +507,8 @@ docker logs <容器名> 2>&1 | tail -40
 | `domain 'xxx' is already open` | 插件被挂载两次 | 从 plugins 条目删掉 `insert`，包自带 `dsh.bundle` 就够了 |
 | `ERR_PNPM_FETCH_401` | 私有仓库鉴权失败 | 检查清单条目的 `token` |
 | `a plugin-registry token needs a registry` | 配了 token 没配 registry | 补上 `registry` |
-| `must match /^[a-z][a-z0-9_]*$/` | 应用名不合法 | 换成字母开头的名字 |
+| `deployment.database` | Nacos 数据库字段缺失或无效 | 按第 4.1 节补齐字段 |
+| `unsupported layout` | 已有数据库结构不兼容 | 备份后转换数据或预建新库 |
 | `ERR_MODULE_NOT_FOUND` | 插件依赖没装上 | 确认依赖写在插件 `package.json` 的 `dependencies` |
 
 ### 构建失败但显示成功
@@ -587,19 +529,21 @@ docker compose -f deploy/docker-compose.yml build --progress=plain dsh 2>&1 | gr
 
 ### Nacos 改了不生效
 
-先确认条目名对不对：条目前缀是 `DSH_APP_NAME`，不设时是 `dsh`。
+先确认 Nacos 命名空间、Group 和 Data ID。默认条目名固定为 `dsh-settings.yaml` 等，不随应用名变化。
 
 ```sh
-docker exec <nacos容器> sh -c 'curl -s "http://127.0.0.1:8848/nacos/v3/admin/cs/config?dataId=order-svc-settings.yaml&groupName=DEFAULT_GROUP&namespaceId=" -H "serverIdentity: security"'
+docker exec <nacos容器> sh -c 'curl -s "http://127.0.0.1:8848/nacos/v3/admin/cs/config?dataId=dsh-settings.yaml&groupName=DEFAULT_GROUP&namespaceId=order-svc" -H "serverIdentity: security"'
 ```
 
-然后按类型判断：插件清单本来就需要重启；其余条目应在 10 秒内生效。
+数据库、应用名和插件清单需要重启；其他设置按其声明的更新方式生效。补丁条目必须是一个完整 YAML 数组，不能在 `[]` 后直接追加另一个数组。
 
-### 确认数据落在哪个 schema
+### 确认数据归属
 
-```sh
-docker exec <pg容器> psql -U dsh -d dsh -c "\dn"
-docker exec <pg容器> psql -U dsh -d dsh -c "select unit, count(*) from order_svc.kv_record group by unit;"
+```sql
+SELECT app, user_id, COUNT(*)
+FROM dsh_session
+WHERE is_deleted = 'N'
+GROUP BY app, user_id;
 ```
 
 -----

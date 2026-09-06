@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-session` provides the append-only session log that records an agent's whole interaction history — the single source of truth every model-visible fact flows through. The LLM message history is *derived* from the log (`deriveMessages()`), never stored separately, so replay is re-derivation from the same events and compaction can shadow older surface entries without deleting history. The package also provides the in-memory store (`ctx.sessions`), the typed `SessionEvent` vocabulary that plugins extend by declaration merging, and the surface layer that orders message-producing events. Persistence is deliberately a separate concern: backends subscribe to `session/event` and flush on `session/flush`. Choose it as the foundation of any agent session; it runs no model calls itself.
 
+`SessionHeader.userId` records optional platform ownership. Missing ownership belongs to `-`; ordinary forks preserve the parent's user ID. This metadata does not add model-visible events. [User identity](../../identity/user-context/README.md) owns request scoping and validation.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

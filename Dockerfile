@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # ---------------------------------------------------------------------------
 # DeepSeek Harness — containerized build.
 #
@@ -9,8 +8,10 @@
 # The build context is the repository root, which carries both the sources and
 # the deploy assets.
 #
-#   docker build -f deploy/Dockerfile -t dsh .
+#   docker build -t dsh .
 # ---------------------------------------------------------------------------
+
+ARG RUNTIME_BASE_IMAGE=node:24-bookworm-slim
 
 FROM node:24-bookworm AS build
 
@@ -40,7 +41,7 @@ RUN pnpm run build
 
 # ---------------------------------------------------------------------------
 
-FROM node:24-bookworm-slim AS runtime
+FROM ${RUNTIME_BASE_IMAGE} AS runtime
 
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
@@ -56,7 +57,7 @@ RUN corepack enable && corepack prepare pnpm@11.7.0 --activate \
 
 WORKDIR /app
 COPY --from=build /src /app
-COPY deploy/deploy-entrypoint.sh deploy/prepare-profile.mjs /usr/local/bin/
+COPY deploy/deploy-entrypoint.sh deploy/prepare-profile.mjs deploy/deployment-config.mjs /usr/local/bin/
 RUN chmod +x /usr/local/bin/deploy-entrypoint.sh && mkdir -p "$DSH_HOME"
 
 # The bind, the access gates, and the Nacos/OceanBase coordinates come from

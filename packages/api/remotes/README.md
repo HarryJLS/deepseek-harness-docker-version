@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 Two-sided BFF for Host Remote capabilities selected by this application. The Host entry owns the forwarded-event selection and registers its application event source with API Gateway; the Client entry imports generated `/remote` artifacts as runtime values, mounts each contribution through `ctx.remote.$mount()`, and re-exports their declaration merges. Client business packages depend on this facade rather than the Gateway implementation or individual Remote runtime entries.
 
+Session notifications carry their durable owner's delivery target to Gateway; approval and user-question waterfalls derive that owner from the subject Agent's Session. Global configuration notifications remain application-wide. User targets are Host routing metadata, not additional event arguments.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

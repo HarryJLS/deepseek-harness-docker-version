@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 The package carries browser-to-Host Remote calls, exact Fetch responses, and connection generations. The Client plugin mounts `ctx.connection` with current-page loopback state, a generic RPC carrier, the active generation and its Host facts, and the registration point for one generation source. A generation becomes visible when its source reports ready; source completion, failure, withdrawal, or an explicit stop clears it before `ConnectionController` reconnects with backoff.
 
+The optional `userIdHeader` configuration admits platform identity only from a trusted authenticating proxy. HTTP requests and WebSocket upgrades use the same validation, with `-` for missing information. The [deployment guide](../../../deploy/README.md#user-isolation) defines the proxy's obligations; this header does not replace authentication.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

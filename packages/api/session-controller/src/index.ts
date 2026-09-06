@@ -2,6 +2,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { DEFAULT_USER_ID, withUser } from '@deepseek-ai/dsh-user-context'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import { canOpenNativePath, openNativePath } from '@deepseek-ai/dsh-native-command'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
@@ -9,6 +10,7 @@ import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import { Remote, TypertRemoteFailure, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import {
   ApiSessionAgentController,
+  assertApiSessionUser,
   inspectApiSession,
   type ApiSessionAgentResult,
 } from './agent.ts'
@@ -134,16 +136,24 @@ export class SessionController extends TypertRemoteService {
     ctx.plugin(SessionSkillCatalog)
 
     ctx.on('session/created', (session) => {
-      ctx.emit('api-session/added', this.listState.summaryFor(session))
+      withUser(session.header.userId ?? DEFAULT_USER_ID, () => {
+        ctx.emit('api-session/added', this.listState.summaryFor(session))
+      })
     })
     ctx.on('session/disposed', (session) => {
-      ctx.emit('api-session/removed', session.id)
+      withUser(session.header.userId ?? DEFAULT_USER_ID, () => {
+        ctx.emit('api-session/removed', session.id)
+      })
     })
     ctx.on('agent/status', ({ agent, status }) => {
-      ctx.emit('api-session/status', agent.id, status === 'running')
+      withUser(agent.session.header.userId ?? DEFAULT_USER_ID, () => {
+        ctx.emit('api-session/status', agent.id, status === 'running')
+      })
     })
     ctx.on('agent/error', ({ agent, error }) => {
-      ctx.emit('api-session/error', agent.id, errorChain(error))
+      withUser(agent.session.header.userId ?? DEFAULT_USER_ID, () => {
+        ctx.emit('api-session/error', agent.id, errorChain(error))
+      })
     })
     ctx.on('session/event', (session, event) => {
       if (event.type === 'request/header') {
@@ -156,7 +166,9 @@ export class SessionController extends TypertRemoteService {
         )
       }
       if (event.type !== 'user/message' || event.data.source.kind !== 'user') return
-      ctx.emit('api-session/activity', session.id, event.time)
+      withUser(session.header.userId ?? DEFAULT_USER_ID, () => {
+        ctx.emit('api-session/activity', session.id, event.time)
+      })
     })
   }
 
@@ -194,6 +206,7 @@ export class SessionController extends TypertRemoteService {
   ): Promise<{ meta: SessionHeader; events: SessionEvent[] }> {
     const attached = this.ctx.sessions.get(sessionId)
     if (attached !== undefined) {
+      assertApiSessionUser(attached.header)
       return Promise.resolve({ meta: attached.header, events: [...attached.events] })
     }
     return inspectApiSession(this.ctx, sessionId, signal)
