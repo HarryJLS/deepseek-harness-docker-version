@@ -1,49 +1,54 @@
 ---
-description: "The Nacos group map: live configuration and credentials served from a Nacos server, for operators and maintainers deploying the harness without a writable volume."
+description: "Nacos-backed settings, credentials, and file mirrors for container deployments."
 kind: "package-group"
 ---
 
 # packages/nacos
 
+English | [中文](README.zh.md)
+
 ## Summary
 
-The Nacos group lets a deployment serve the harness's live configuration from a Nacos server instead of documents under the harness home. With it, a container that owns no writable volume still resolves user settings and credentials, several replicas read one authoritative copy, and an operator editing a value in the Nacos console reaches every running instance within seconds without a restart or a redeploy. The group is optional and host-side only: it registers no tools, injects no prompts, and writes no session events, so the model never sees it. Use it when the deployment's filesystem is not durable or not shared; a single-machine composition is better served by the file-backed providers.
+Use Nacos to share settings, credentials, and selected configuration files across harness replicas. These packages remove the need for a persistent local configuration volume; file mirrors still need writable local paths. Settings and credential consumers keep using their existing services.
 
 ## Table of Contents
 
 - [Packages](#packages)
-- [What belongs here](#what-belongs-here)
+- [Configuration ownership](#configuration-ownership)
 - [Related documentation](#related-documentation)
+- [Dev Note](#dev-note)
 
 -----
 
 <a id="packages"></a>
 ## Packages
 
-| Package | Role | ctx key |
+Choose a provider for a service-backed document or a mirror for a path-based consumer.
+
+| Package | Purpose | Service |
 |---|---|---|
-| [`nacos-client`](nacos-client/README.md) | Speaks the Nacos gRPC client protocol and holds one entry open as a live document | none (library) |
-| [`settings-nacos`](settings-nacos/README.md) | Serves the user-settings document from one Nacos entry | `ctx.settings` |
-| [`credentials-nacos`](credentials-nacos/README.md) | Serves credentials from one Nacos entry, under the process environment | `ctx.credentials` |
-| [`nacos-file-mirror`](nacos-file-mirror/README.md) | Writes Nacos entries to files whose consumers read a path, not a seam | none (effect only) |
+| [nacos-client](nacos-client/README.md) | Read, publish, and watch configuration entries over gRPC | Library |
+| [settings-nacos](settings-nacos/README.md) | Store user-settings namespace sections | `ctx.settings` |
+| [credentials-nacos](credentials-nacos/README.md) | Store credential references and records below the process environment | `ctx.credentials` |
+| [nacos-file-mirror](nacos-file-mirror/README.md) | Materialize entries for consumers that read files | No service |
 
 -----
 
-<a id="what-belongs-here"></a>
-## What belongs here
+<a id="configuration-ownership"></a>
+## Configuration ownership
 
-A value belongs in Nacos when it can change while the deployment runs and the change should reach every replica. A value does NOT belong here when it must be readable before the Nacos connection exists — the bind address, the Nacos coordinates themselves, and the database URL are all in that class, and reading them from Nacos would be circular. Those stay in the composition that ships with the image.
+Nacos connection coordinates must be available before contacting Nacos. Database configuration is different: the container bootstrap reads `deployment.database` from Nacos before starting database providers, as described in the [deployment guide](../../deploy/README.md#database-configuration).
 
-The two providers replace the file-backed ones through their capability seams, so every consumer is unchanged: the Models page, the LLM adapters, and the agent default model all keep reading the same resolved namespaces.
-
-Not every live value has a seam to replace. The user-global `AGENTS.md` and a profile's user patch layer are read from a path, so `nacos-file-mirror` puts them under the same Nacos edit by writing the file instead of serving the value.
-
------
+Settings and credentials receive live updates through their providers. Mirrored files take effect when their consumers read or reload them. Database connection changes require an application restart; storing a value in Nacos does not by itself make that value reloadable.
 
 <a id="related-documentation"></a>
 ## Related documentation
 
-- [Settings subsystem](../../docs/subsystems/settings.md) — namespaces, resolution order, and change commits.
-- [User-settings service](../settings/settings/README.md) — the seam these providers implement.
-- [Credentials service](../credentials/credentials/README.md) — the reference and record key spaces.
-- [Container deployment guide](../../deploy/README.md) — the configuration split these packages serve.
+- [Settings subsystem](../../docs/subsystems/settings.md)
+- [Credentials service](../credentials/credentials/README.md)
+- [Container deployment guide](../../deploy/README.md)
+
+<a id="dev-note"></a>
+## Dev Note
+
+None.

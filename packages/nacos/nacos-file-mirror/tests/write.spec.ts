@@ -7,10 +7,20 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import z from '@deepseek-ai/schemastery'
 import { mkdtemp, readFile, readdir, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { writeFileAtomic } from '../src/write.ts'
+import { Config, writeFileAtomic } from '../src/index.ts'
+
+describe('mirror configuration', () => {
+  it('resolves an empty file list and validates each file entry', () => {
+    expect(z.resolve({ host: 'nacos' }, Config, {})[0]).toMatchObject({ host: 'nacos', files: [] })
+    expect(Config({ host: 'nacos', files: [{ dataId: 'dsh-agents.md', path: '/var/lib/dsh/AGENTS.md' }] }).files)
+      .toEqual([{ dataId: 'dsh-agents.md', path: '/var/lib/dsh/AGENTS.md' }])
+    expect(() => z.resolve({ host: 'nacos', files: [{ dataId: 'dsh-agents.md' }] }, Config, {})).toThrow()
+  })
+})
 
 /** One empty directory to write into, removed with the run's temp root. */
 async function scratch(): Promise<string> {

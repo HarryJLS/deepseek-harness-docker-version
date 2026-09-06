@@ -290,7 +290,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/api/gateway/src/index.ts:117`](../packages/api/gateway/src/index.ts)
+来源：[`packages/api/gateway/src/index.ts:119`](../packages/api/gateway/src/index.ts)
 
 <a id="deepseek-aidsh-api-session-controller"></a>
 
@@ -308,7 +308,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/api/session-controller/src/index.ts:67`](../packages/api/session-controller/src/index.ts)
+来源：[`packages/api/session-controller/src/index.ts:69`](../packages/api/session-controller/src/index.ts)
 
 <a id="deepseek-aidsh-api-settings-controller"></a>
 
@@ -358,6 +358,36 @@ export interface Config {
 ```
 
 来源：[`packages/attachment/attachment-local/src/index.ts:55`](../packages/attachment/attachment-local/src/index.ts)
+
+<a id="deepseek-aidsh-attachment-mysql"></a>
+
+## `@deepseek-ai/dsh-attachment-mysql`
+
+```ts config-catalog
+/** Plugin config: the database plus the deployment's image policy. */
+export interface Config extends MysqlConnectionConfig {
+  /** Largest accepted encoded image. */
+  maxImageBytes?: number
+  /** Largest accepted image count in one message. */
+  maxImagesPerMessage?: number
+  /** Largest accepted aggregate encoded bytes in one message. */
+  maxMessageImageBytes?: number
+  /** Largest accepted decoded pixel count. */
+  maxImagePixels?: number
+  /** Largest accepted decoded long edge. */
+  maxImageDimension?: number
+  /** Total-pixel budget of the stored normalized image. */
+  normalizedImageMaxPixels?: number
+  /** Long-edge cap of the stored normalized image. */
+  normalizedImageMaxDimension?: number
+  /** Encoded-byte target of the stored normalized image; the quality ladder aims at it. */
+  normalizedImageMaxBytes?: number
+}
+```
+
+依赖：[`MysqlConnectionConfig`](../packages/util/mysql-schema/src/index.ts)
+
+来源：[`packages/attachment/attachment-mysql/src/index.ts:76`](../packages/attachment/attachment-mysql/src/index.ts)
 
 <a id="deepseek-aidsh-bash-local"></a>
 
@@ -415,6 +445,8 @@ export type Config = LocalConfig
 ```ts config-catalog
 /** Plugin config: the deployment's non-loopback serving authorities. */
 export interface ConnectionConfig {
+  /** Trusted proxy user header. Leave unset unless the proxy authenticates users and replaces client-supplied values. */
+  userIdHeader?: string
   /**
    * Authorities this deployment serves beyond loopback: exact `host:port`, or
    * port-less `host` matching any port. The /api trust fence refuses any
@@ -424,6 +456,24 @@ export interface ConnectionConfig {
    * bind. An entry that is not a bare, canonical authority fails plugin load.
    */
   trustedHosts?: string[]
+  /**
+   * Accept every Host authority, replacing the loopback-plus-`trustedHosts`
+   * fence. A deployment reached through a forwarded container port, an
+   * ingress, or a rotating service address cannot enumerate the authorities
+   * its clients write — the LAN literals derived from an all-interface bind
+   * name the container's own interfaces, not the address a browser used. Such
+   * a deployment sets this and gives up the DNS-rebinding and cross-site
+   * defenses the fence provides. Default: false.
+   */
+  allowAnyHost?: boolean
+  /**
+   * Require a browser session (the process launch token, then a signed
+   * cookie) on `/api` and on the application shell. Setting this false serves
+   * the harness — and therefore the shell and tool execution behind it — to
+   * every client that can reach the port, so it belongs only to a deployment
+   * whose network already answers for access. Default: true.
+   */
+  requireAuth?: boolean
   /** Absolute browser-session lifetime in days. Default: 30. */
   cookieMaxAgeDays?: number
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
@@ -587,6 +637,22 @@ export interface Config {
 ```
 
 来源：[`packages/credentials/credentials-local/src/index.ts:64`](../packages/credentials/credentials-local/src/index.ts)
+
+<a id="deepseek-aidsh-credentials-nacos"></a>
+
+## `@deepseek-ai/dsh-credentials-nacos`
+
+```ts config-catalog
+/** Plugin config: where the credentials document lives in Nacos. */
+export interface Config extends NacosEntryConfig {
+  /** Config data id holding the credentials document. Default: `dsh-credentials.yaml`. */
+  dataId?: string
+}
+```
+
+依赖：[`NacosEntryConfig`](../packages/nacos/nacos-client/src/index.ts)
+
+来源：[`packages/nacos/credentials-nacos/src/index.ts:47`](../packages/nacos/credentials-nacos/src/index.ts)
 
 <a id="deepseek-aidsh-e2b"></a>
 
@@ -1527,6 +1593,30 @@ export interface Config {
 
 来源：[`packages/feedback/message-feedback/src/index.ts:49`](../packages/feedback/message-feedback/src/index.ts)
 
+<a id="deepseek-aidsh-nacos-file-mirror"></a>
+
+## `@deepseek-ai/dsh-nacos-file-mirror`
+
+```ts config-catalog
+/** Plugin config: how to reach Nacos, and which entries to mirror. */
+export interface Config extends NacosEntryConfig {
+  /** The entries to mirror; an empty list loads the plugin as a no-op. */
+  files: MirroredFile[]
+}
+
+/** One Nacos entry and the path it is written to. */
+export interface MirroredFile {
+  /** The Nacos data id holding the file body. */
+  dataId: string
+  /** Absolute path the body is written to. */
+  path: string
+}
+```
+
+依赖：[`NacosEntryConfig`](../packages/nacos/nacos-client/src/index.ts)
+
+来源：[`packages/nacos/nacos-file-mirror/src/index.ts:42`](../packages/nacos/nacos-file-mirror/src/index.ts)
+
 <a id="deepseek-aidsh-permission-presets"></a>
 
 ## `@deepseek-ai/dsh-permission-presets`
@@ -1884,6 +1974,26 @@ export type JsonlCompression = 'zstd' | 'none'
 
 来源：[`packages/session/session-persistence-jsonl/src/index.ts:62`](../packages/session/session-persistence-jsonl/src/index.ts)
 
+<a id="deepseek-aidsh-session-persistence-mysql"></a>
+
+## `@deepseek-ai/dsh-session-persistence-mysql`
+
+需要：`sessions`
+
+```ts config-catalog
+/** Plugin configuration. */
+export interface Config extends MysqlConnectionConfig {
+  /** Maximum cold Session preparations retained for history-to-resume reuse. */
+  preparedSessionCacheSize?: number
+  /** Fixed live-event coalescing window; not a backend completion deadline. */
+  writeBatchMaxDelayMs?: number
+}
+```
+
+依赖：[`MysqlConnectionConfig`](../packages/util/mysql-schema/src/index.ts)
+
+来源：[`packages/session/session-persistence-mysql/src/index.ts:53`](../packages/session/session-persistence-mysql/src/index.ts)
+
 <a id="deepseek-aidsh-session-persistence-sqlite"></a>
 
 ## `@deepseek-ai/dsh-session-persistence-sqlite`
@@ -1979,7 +2089,7 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 
 依赖：[`SessionQueryConfig`](../packages/session-query/session-query/src/index.ts)
 
-来源：[`packages/session-query/session-query-sqlite/src/index.ts:89`](../packages/session-query/session-query-sqlite/src/index.ts)
+来源：[`packages/session-query/session-query-sqlite/src/index.ts:90`](../packages/session-query/session-query-sqlite/src/index.ts)
 
 <a id="deepseek-aidsh-session-reference"></a>
 
@@ -2116,6 +2226,29 @@ export interface Config {
 ```
 
 来源：[`packages/settings/settings-file/src/index.ts:21`](../packages/settings/settings-file/src/index.ts)
+
+<a id="deepseek-aidsh-settings-nacos"></a>
+
+## `@deepseek-ai/dsh-settings-nacos`
+
+```ts config-catalog
+/** Plugin config: where the settings document lives in Nacos. */
+export interface Config extends NacosEntryConfig {
+  /** Config data id holding the settings document. Default: `dsh-settings.yaml`. */
+  dataId?: string
+  /**
+   * Whether this deployment may write settings back to Nacos. A replica fleet
+   * that treats Nacos as the single authoring surface sets this false, which
+   * makes every configuration page read-only rather than letting one replica
+   * race another. Default: true.
+   */
+  writable?: boolean
+}
+```
+
+依赖：[`NacosEntryConfig`](../packages/nacos/nacos-client/src/index.ts)
+
+来源：[`packages/nacos/settings-nacos/src/index.ts:30`](../packages/nacos/settings-nacos/src/index.ts)
 
 <a id="deepseek-aidsh-shell-env"></a>
 
@@ -2275,6 +2408,24 @@ export interface Config {
 ```
 
 来源：[`packages/storage/storage-json/src/index.ts:28`](../packages/storage/storage-json/src/index.ts)
+
+<a id="deepseek-aidsh-storage-mysql"></a>
+
+## `@deepseek-ai/dsh-storage-mysql`
+
+需要：`storage`
+
+```ts config-catalog
+/** Plugin config: how to reach the database and what to call this backend. */
+export interface Config extends MysqlConnectionConfig {
+  /** Backend name other plugins mount against. Default: `mysql`. */
+  name?: string
+}
+```
+
+依赖：[`MysqlConnectionConfig`](../packages/util/mysql-schema/src/index.ts)
+
+来源：[`packages/storage/storage-mysql/src/index.ts:51`](../packages/storage/storage-mysql/src/index.ts)
 
 <a id="deepseek-aidsh-storage-sqlite"></a>
 
@@ -3511,6 +3662,7 @@ export interface Config {
 - `@deepseek-ai/dsh-atomic-write`（[`packages/util/atomic-write/src/index.ts`](../packages/util/atomic-write/src/index.ts)）
 - `@deepseek-ai/dsh-base`（[`packages/bundle/base/src/index.ts`](../packages/bundle/base/src/index.ts)）
 - `@deepseek-ai/dsh-brand`（[`packages/util/brand/src/index.ts`](../packages/util/brand/src/index.ts)）
+- `@deepseek-ai/dsh-bundle-docker`（[`packages/bundle/docker/src/index.ts`](../packages/bundle/docker/src/index.ts)）
 - `@deepseek-ai/dsh-client-store`（[`packages/client/store/src/index.ts`](../packages/client/store/src/index.ts)）
 - `@deepseek-ai/dsh-client-test-runtime`（[`packages/test-support/client-runtime/src/index.ts`](../packages/test-support/client-runtime/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-primitives`（[`packages/client/ui-primitives/src/index.ts`](../packages/client/ui-primitives/src/index.ts)）
@@ -3527,6 +3679,8 @@ export interface Config {
 - `@deepseek-ai/dsh-launch-environment`（[`packages/util/launch-environment/src/index.ts`](../packages/util/launch-environment/src/index.ts)）
 - `@deepseek-ai/dsh-llm-mock-server`（[`packages/test-support/llm-mock-server/src/index.ts`](../packages/test-support/llm-mock-server/src/index.ts)）
 - `@deepseek-ai/dsh-loader-smoke`（[`packages/test-support/loader-smoke/src/index.ts`](../packages/test-support/loader-smoke/src/index.ts)）
+- `@deepseek-ai/dsh-mysql-schema`（[`packages/util/mysql-schema/src/index.ts`](../packages/util/mysql-schema/src/index.ts)）
+- `@deepseek-ai/dsh-nacos-client`（[`packages/nacos/nacos-client/src/index.ts`](../packages/nacos/nacos-client/src/index.ts)）
 - `@deepseek-ai/dsh-native-command`（[`packages/util/native-command/src/index.ts`](../packages/util/native-command/src/index.ts)）
 - `@deepseek-ai/dsh-output-retention`（[`packages/util/output-retention/src/index.ts`](../packages/util/output-retention/src/index.ts)）
 - `@deepseek-ai/dsh-sandbox-windows-acl`（[`packages/sandbox/sandbox-windows-acl/src/index.ts`](../packages/sandbox/sandbox-windows-acl/src/index.ts)）
@@ -3542,6 +3696,7 @@ export interface Config {
 - `@deepseek-ai/dsh-typert-generator`（[`packages/typert/generator/src/index.ts`](../packages/typert/generator/src/index.ts)）
 - `@deepseek-ai/dsh-typert-protocol`（[`packages/typert/protocol/src/index.ts`](../packages/typert/protocol/src/index.ts)）
 - `@deepseek-ai/dsh-typert-registry`（[`packages/typert/registry/src/index.ts`](../packages/typert/registry/src/index.ts)）
+- `@deepseek-ai/dsh-user-context`（[`packages/identity/user-context/src/index.ts`](../packages/identity/user-context/src/index.ts)）
 - `@deepseek-ai/dsh-util-crypto`（[`packages/util/crypto/src/index.ts`](../packages/util/crypto/src/index.ts)）
 - `@deepseek-ai/dsh-util-workspace-path`（[`packages/util/workspace-path/src/index.ts`](../packages/util/workspace-path/src/index.ts)）
 - `@deepseek-ai/dsh-win32-process`（[`packages/subprocess/win32-process/src/index.ts`](../packages/subprocess/win32-process/src/index.ts)）

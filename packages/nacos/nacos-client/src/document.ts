@@ -97,9 +97,9 @@ export function nacosDocument<T>(
 /**
  * A Nacos entry held open: read once, watched for pushes, written serially.
  *
- * The owner drives the lifecycle explicitly — `open` before use, `close` at
- * disposal — because both consumers are Cordis services that must connect
- * before becoming injectable and release on teardown.
+ * The owner connects before reading or watching and closes at disposal.
+ * The operation queue belongs to this instance; other instances are not
+ * coordinated by a distributed lock or compare-and-swap.
  */
 export class NacosDocument<T> {
   private readonly client: NacosConfigClient
@@ -160,7 +160,7 @@ export class NacosDocument<T> {
     )
   }
 
-  /** Release the watch and the connection; queued work then no-ops. */
+  /** Release the watch and connection; queued change notifications are ignored. */
   close(): void {
     this.closed = true
     this.disposeWatch?.()
@@ -193,7 +193,10 @@ export class NacosDocument<T> {
     return this.enqueue(async () => operation(this.codec.parse(await this.readText())))
   }
 
-  /** Publish a document already decided under {@link exclusive}. */
+  /**
+   * Publish a document already decided under {@link exclusive}.
+   * @param document - the complete document to replace the stored entry.
+   */
   publish(document: T): Promise<void> {
     return this.client.publish(
       { dataId: this.dataId, group: this.group },

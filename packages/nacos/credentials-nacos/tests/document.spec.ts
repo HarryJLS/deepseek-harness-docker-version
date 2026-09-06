@@ -7,7 +7,18 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { parseDocument } from '../src/index.ts'
+import z from '@deepseek-ai/schemastery'
+import { NacosCredentialProvider, parseDocument } from '../src/index.ts'
+
+describe('provider configuration', () => {
+  it('resolves the documented entry and requires a server host', () => {
+    expect(NacosCredentialProvider.Config({ host: 'nacos' })).toMatchObject({
+      host: 'nacos',
+      dataId: 'dsh-credentials.yaml',
+    })
+    expect(() => z.resolve({}, NacosCredentialProvider.Config, {})).toThrow()
+  })
+})
 
 describe('parseDocument', () => {
   it('treats an absent or blank entry as an empty document', () => {

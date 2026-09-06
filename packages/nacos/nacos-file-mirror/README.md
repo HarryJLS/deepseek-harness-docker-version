@@ -1,13 +1,15 @@
 ---
-description: "The Nacos-to-file mirror: how a deployment edits the global prompt and the profile's plugin layer from the Nacos console, for operators running the harness in a container."
+description: "Mirror Nacos entries to local instruction and profile files for path-based consumers."
 kind: "package-reference"
 ---
 
 # @deepseek-ai/dsh-nacos-file-mirror
 
+English | [中文](README.zh.md)
+
 ## Summary
 
-`dsh-nacos-file-mirror` writes Nacos entries to files on the harness host and rewrites them whenever the server pushes a change. It exists because two things a deployment needs to change without a redeploy are read from a path rather than through a capability seam: the user-global `AGENTS.md` that instruction discovery injects into every session's prompt, and a profile's `cordis.patch.yml`, which the Loader re-composes from whenever it changes. Mirroring an entry onto each path puts both under the same Nacos edit that already reaches every replica, and leaves the consumers untouched — the prompt and the plugin tree keep reading a file.
+Write Nacos entries to local files and replace their contents when Nacos pushes changes. Use this plugin for consumers that read a path, such as workspace instructions and live profile patches. Mirrored paths need writable local storage, but not a persistent configuration volume.
 
 ## Table of Contents
 
@@ -16,13 +18,14 @@ kind: "package-reference"
 - [Further Exploration](#further-exploration)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
 
 -----
 
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this plugin in a composition whose files must follow a Nacos entry. It registers no service and injects nothing; the effect is entirely on the filesystem.
+Mount the plugin with absolute target paths:
 
 ```yaml
 - id: nacos-file-mirror
@@ -36,14 +39,18 @@ Mount this plugin in a composition whose files must follow a Nacos entry. It reg
         path: /var/lib/dsh/profiles/web/cordis.patch.yml
 ```
 
-Every `path` must be absolute — a relative one resolves against whatever directory the harness was started in, which is not a property of the deployment.
-
-### What each mirrored entry reaches
-
-| Entry writes | Read by | Takes effect |
+| Field | Default | Meaning |
 |---|---|---|
-| `$DSH_HOME/AGENTS.md` | instruction discovery, as the user-global instruction file | the next session |
-| `$DSH_HOME/profiles/<profile>/cordis.patch.yml` | the Loader, on a profile declaring `patchReload: live` | on the reload the write triggers |
+| `host` | required | Nacos server host |
+| `files` | `[]` | Entries to mirror; empty loads without file effects |
+| `files[].dataId` | required | Nacos entry id |
+| `files[].path` | required | Absolute destination path |
+
+See [shared connection fields](../nacos-client/README.md#connection-fields) and the [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-nacos-file-mirror). Relative paths fail at load. An absent entry leaves the target untouched; an empty entry writes an empty file.
+
+### When changes take effect
+
+Instruction changes are consumed through the [instruction plugin's baseline and refresh rules](../../context/agent-instructions/README.md#use-this-package), including successful filesystem touches and resume reconciliation. A profile patch reloads only when that profile enables `patchReload: live`.
 
 -----
 
@@ -51,54 +58,53 @@ Every `path` must be absolute — a relative one resolves against whatever direc
 ## Understand the implementation
 
 <details>
-<summary>Implementation internals — click to expand</summary>
+<summary>Implementation internals</summary>
 
-### Design philosophy
+[src/index.ts](src/index.ts) connects, reads each entry, writes its initial content, and registers a watcher. Connection or initial read failures reject loading. File-write failures are logged and preserve the previous target; background connection and parse failures also reach the logger.
 
-- **An absent entry is not an empty one.** An empty entry is a deliberate empty file; an absent entry is a target this deployment does not own, and its path is left untouched. Writing an empty file for both would let a deployment that never created the entry clobber whatever the image shipped.
-- **Every write is atomic.** Both consumers watch the file they are given, so a truncate-then-write is observable in its torn state — a half-written patch fails the composition, and nothing reports the write as the cause. The body lands on a temporary sibling and is renamed, which is atomic within one filesystem.
-- **A push has nowhere to throw.** A change arrives outside any caller's control flow, so a failed write is logged and the previous content stands. The load-time write goes through the same path, so a Nacos that cannot be read leaves the deployment serviceable with the file the image shipped.
-
-### Source map
-
-| File | Role |
-|---|---|
-| [`src/index.ts`](src/index.ts) | Config, per-entry open/read/watch, disposal |
-| [`src/write.ts`](src/write.ts) | The atomic single-file write |
+[src/write.ts](src/write.ts) writes a private temporary sibling and renames it onto the destination. Disposal closes every registered document and its watcher.
 
 </details>
-
------
 
 <a id="further-exploration"></a>
 ## Further Exploration
 
-- [nacos-client](../nacos-client/README.md) — the document abstraction this plugin holds one of per entry.
-- [agent-instructions](../../context/agent-instructions/README.md) — what reads the mirrored `AGENTS.md`.
-- [Container deployment guide](../../../deploy/README.md) — the deployment that mounts this.
-
------
+- [Nacos client](../nacos-client/README.md)
+- [Instruction consumer](../../context/agent-instructions/README.md)
+- [Container deployment](../../../deploy/README.md)
 
 <a id="model-experience"></a>
 ## Model Experience
 
-Indirect. The plugin adds no tool and no prompt of its own, but the `AGENTS.md` it mirrors is injected by instruction discovery as the user-global instruction file, so an operator editing that entry changes what every later session's model reads. The model sees the file's content under its usual instruction heading and has no way to tell it came from Nacos.
+### Mirrored instruction context
+
+#### What the model sees
+
+The instruction consumer includes `$DSH_HOME/AGENTS.md` through its logged baseline or refresh `user/message` events; the mirror registers no prompt or tool itself.
 
 #### Token effect
 
-Whatever the mirrored instruction file costs, once per session prompt. An operator publishing a large entry pays it on every request in every session.
+The instruction consumer owns rendering and its `maxBytes` budget; mirroring alone adds no request tokens.
 
 #### KV Cache effect
 
-A changed `AGENTS.md` invalidates the cached request prefix for sessions started after the write; sessions already running keep the instructions they loaded.
+Cache reuse follows the instruction consumer's logged baseline and refresh messages; mirroring alone sends no model request.
 
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
 
-These limits define when the package is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
+- Mirroring is one-way; local edits are not published and a later Nacos update can replace them.
+- The Loader reads a profile patch before plugins load; a changed mirrored patch takes effect through the subsequent live reload.
+- A mirrored patch cannot install missing packages; its modules must already resolve in the profile.
+- Every entry uses the plugin's configured Nacos credentials; server-side permissions control which entries those credentials can read.
 
-- **The mirror is one-way** — a local edit to a mirrored path is overwritten by the next push and is never published back. Nacos is the source of truth for every mirrored file.
-- **A patch entry lands one reload late on a first boot** — the Loader reads the profile patch before any plugin loads, so an entry changed while the container was down is applied by the reload the mirror's write triggers, not during the initial composition.
-- **A mirrored plugin layer cannot install packages** — the patch may only name modules the profile already resolves. A roster addition still needs `DSH_PLUGINS` and a restart.
-- **No entry-level access control** — every mirrored entry is read with the plugin's single set of Nacos credentials, so an operator who can edit one can edit all of them. Scope the namespace, not the entry.
+<a id="dev-note"></a>
+### Dev Note
+
+<details>
+<summary>Working context for maintainers</summary>
+
+None.
+
+</details>

@@ -444,6 +444,197 @@ export function apply(ctx: Context, config: Config): void {}
   })
 })
 
+describe('gen-config-catalog shared schema fields', () => {
+  it('follows aliased workspace re-exports and nested package-local spreads without executing modules', () => {
+    const root = makeRoot()
+    writePkg(root, 'group/shared', '@fix/shared', {
+      'src/index.ts': "export { fields as connectionFields, type Connection } from './fields.ts'\n",
+      'src/fields.ts': `import z from '@deepseek-ai/schemastery'
+import { endpointFields } from './endpoint.ts'
+export interface Connection {
+  /** Server host. */
+  host?: string
+  /** Endpoints. */
+  endpoints?: {
+    /** Server port. */
+    port?: number
+  }[]
+}
+export const fields = {
+  host: z.string(),
+  endpoints: z.array(z.object({ ...endpointFields })),
+}
+throw new Error('The catalog must never execute this module')
+`,
+      'src/endpoint.ts': "import z from '@deepseek-ai/schemastery'\nexport const endpointFields = { port: z.number() }\n",
+    })
+    writePkg(root, 'group/one', '@fix/one', {
+      'src/index.ts': `import z from '@deepseek-ai/schemastery'
+import { connectionFields as shared, type Connection } from '@fix/shared'
+/** Fixture config. */
+export interface Config extends Connection {
+  /** A knob. */
+  knob?: string
+}
+const alias = (shared satisfies Record<string, unknown>)
+export const Config = z.object({ ...alias, ...({ knob: z.string() } as const) })
+export function apply(ctx: unknown, config: Config): void {}
+`,
+    })
+    expect(collectConfigCatalog(root).find(entry => entry.pkg === '@fix/one')?.schemaKeys)
+      .toEqual(['host', 'endpoints', 'endpoints[].port', 'knob'])
+  })
+
+  it.each([
+    ['a top-level field', '{ hidden: z.string() }', 'hidden'],
+    ['a nested field', '{ entries: z.array(z.object({ ...nested })) }', 'entries[].hidden'],
+  ])('rejects %s hidden in an imported spread', (_label, fields, path) => {
+    const root = makeRoot()
+    writePkg(root, 'group/shared', '@fix/shared', {
+      'src/index.ts': `import z from '@deepseek-ai/schemastery'
+const nested = { hidden: z.string() }
+export const fields = ${fields}
+`,
+    })
+    writePkg(root, 'group/one', '@fix/one', {
+      'src/index.ts': `import z from '@deepseek-ai/schemastery'
+import { fields } from '@fix/shared'
+export interface Config {
+  /** Entries. */
+  entries?: {
+    /** Visible value. */
+    value?: string
+  }[]
+}
+export const Config = z.object({ ...fields })
+export function apply(ctx: unknown, config: Config): void {}
+`,
+    })
+    expect(() => collectConfigCatalog(root)).toThrow(`schema validates key '${path}'`)
+  })
+
+  it('checks constant object arguments as well as spread operands', () => {
+    const root = make({
+      'src/index.ts': `import z from '@deepseek-ai/schemastery'
+${DOCUMENTED_CONFIG}
+const fields = { knob: z.string() }
+const alias = fields
+export const Config = z.object(alias)
+export function apply(ctx: unknown, config: Config): void {}
+`,
+    })
+    expect(collectConfigCatalog(root)[0]?.schemaKeys).toEqual(['knob'])
+  })
+
+  it.each([
+    ['...fields, knob: z.object({ value: z.string() })', false],
+    ['knob: z.object({ value: z.string() }), ...fields', true],
+  ])('uses the final property value in {%s}', (properties, hidden) => {
+    const root = make({
+      'src/index.ts': `import z from '@deepseek-ai/schemastery'
+export interface Config {
+  /** A knob. */
+  knob?: {
+    /** Visible value. */
+    value?: string
+  }
+}
+const fields = { knob: z.object({ hidden: z.string() }) }
+export const Config = z.object({ ${properties} })
+export function apply(ctx: unknown, config: Config): void {}
+`,
+    })
+    if (hidden) expect(() => collectConfigCatalog(root)).toThrow("schema validates key 'knob.hidden'")
+    else expect(collectConfigCatalog(root)[0]?.schemaKeys).toEqual(['knob', 'knob.value'])
+  })
+
+  it.each([
+    ['a function result', 'function fields() { return { knob: z.string() } }', 'fields()'],
+    ['a mutable binding', 'let fields = { knob: z.string() }', 'fields'],
+    ['an external import', "import { fields } from 'external-config'", 'fields'],
+    ['an unresolved name', '', 'fields'],
+    ['cyclic constant aliases', 'const fields = other\nconst other = fields', 'fields'],
+  ])('rejects %s instead of omitting its fields', (_label, declaration, expression) => {
+    const root = make({
+      'src/index.ts': `import z from '@deepseek-ai/schemastery'
+${DOCUMENTED_CONFIG}
+${declaration}
+export const Config = z.object({ ...${expression} })
+export function apply(ctx: unknown, config: Config): void {}
+`,
+    })
+    expect(() => collectConfigCatalog(root)).toThrow('must resolve to a constant object literal')
+  })
+
+  it('rejects an unresolvable nested object argument', () => {
+    const root = make({
+      'src/index.ts': `import z from '@deepseek-ai/schemastery'
+${DOCUMENTED_CONFIG}
+export const Config = z.object({ knob: z.object(makeFields()) })
+export function apply(ctx: unknown, config: Config): void {}
+`,
+    })
+    expect(() => collectConfigCatalog(root)).toThrow("schema object 'makeFields()' must resolve")
+  })
+
+  it.each([
+    ['spread', '{ ...fields }', 'cyclic schema object spread'],
+    ['nested object', '{ knob: z.object(fields) }', 'cyclic nested schema object'],
+  ])('rejects a cyclic %s', (_label, value, message) => {
+    const root = make({
+      'src/index.ts': `import z from '@deepseek-ai/schemastery'
+${DOCUMENTED_CONFIG}
+const fields = ${value}
+export const Config = z.object({ ...fields })
+export function apply(ctx: unknown, config: Config): void {}
+`,
+    })
+    expect(() => collectConfigCatalog(root)).toThrow(message)
+  })
+
+  it('rejects a cyclic re-export chain', () => {
+    const root = make({
+      'src/index.ts': `import z from '@deepseek-ai/schemastery'
+import { fields } from './first.ts'
+${DOCUMENTED_CONFIG}
+export const Config = z.object({ ...fields })
+export function apply(ctx: unknown, config: Config): void {}
+`,
+      'src/first.ts': "export * from './second.ts'\n",
+      'src/second.ts': "export * from './first.ts'\n",
+    })
+    expect(() => collectConfigCatalog(root)).toThrow('must resolve to a constant object literal')
+  })
+
+  it('rejects an import of a private constant', () => {
+    const root = make({
+      'src/index.ts': `import z from '@deepseek-ai/schemastery'
+import { fields } from './private.ts'
+${DOCUMENTED_CONFIG}
+export const Config = z.object({ ...fields })
+export function apply(ctx: unknown, config: Config): void {}
+`,
+      'src/private.ts': "import z from '@deepseek-ai/schemastery'\nconst fields = { knob: z.string() }\n",
+    })
+    expect(() => collectConfigCatalog(root)).toThrow('must resolve to a constant object literal')
+  })
+
+  it.each(['{ [key]: z.string() }', '{ get knob() { return z.string() } }'])(
+    'rejects non-plain properties in a shared field set: %s',
+    (value) => {
+      const root = make({
+        'src/index.ts': `import z from '@deepseek-ai/schemastery'
+${DOCUMENTED_CONFIG}
+const fields = ${value}
+export const Config = z.object({ ...fields })
+export function apply(ctx: unknown, config: Config): void {}
+`,
+      })
+      expect(() => collectConfigCatalog(root)).toThrow('is not a plain key')
+    },
+  )
+})
+
 describe('gen-config-catalog render', () => {
   it('renders sections, fences, and the terse classification lists', () => {
     const root = makeRoot()

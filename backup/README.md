@@ -1,21 +1,37 @@
-# backup/ — retired PostgreSQL adapters
+# PostgreSQL Reference Copies
 
-The four packages here were the harness's PostgreSQL persistence layer. They are kept as a reference copy of a working implementation and are **not part of the build**: `backup/` is outside the `packages/*/*` workspace glob, so nothing installs, compiles, tests, or publishes them, and their `tsconfig.json` project references point at paths that no longer exist.
+English | [中文](README.zh.md)
 
-| Directory | Was |
+## Summary
+
+This directory preserves retired PostgreSQL adapters for source reference. It is outside the workspace package globs and the build, test, publish, and lint source sets. These packages are not supported deployment options.
+
+## Table of Contents
+
+- [Copies and replacements](#copies-and-replacements)
+- [Restoration requirements](#restoration-requirements)
+- [Dev Note](#dev-note)
+
+<a id="copies-and-replacements"></a>
+## Copies and replacements
+
+The source copies remain available alongside links to the supported OceanBase/MySQL providers.
+
+| Reference copy | Supported package |
 |---|---|
-| `postgres-schema` | `@deepseek-ai/dsh-postgres-schema` |
-| `storage-postgres` | `@deepseek-ai/dsh-storage-postgres` |
-| `session-persistence-postgres` | `@deepseek-ai/dsh-session-persistence-postgres` |
-| `attachment-postgres` | `@deepseek-ai/dsh-attachment-postgres` |
+| [postgres-schema](postgres-schema/README.md) | [mysql-schema](../packages/util/mysql-schema/README.md) |
+| [storage-postgres](storage-postgres/README.md) | [storage-mysql](../packages/storage/storage-mysql/README.md) |
+| [session-persistence-postgres](session-persistence-postgres/README.md) | [session-persistence-mysql](../packages/session/session-persistence-mysql/README.md) |
+| [attachment-postgres](attachment-postgres/README.md) | [attachment-mysql](../packages/attachment/attachment-mysql/README.md) |
 
-Their replacements target the MySQL protocol (OceanBase in MySQL mode, and MySQL itself): [`dsh-mysql-schema`](../packages/util/mysql-schema/README.md), [`dsh-storage-mysql`](../packages/storage/storage-mysql/README.md), [`dsh-session-persistence-mysql`](../packages/session/session-persistence-mysql/README.md), and [`dsh-attachment-mysql`](../packages/attachment/attachment-mysql/README.md).
+<a id="restoration-requirements"></a>
+## Restoration requirements
 
-Two things changed in the move, and both are why these copies cannot be restored as-is:
+The retained manifests and TypeScript references describe their original workspace locations. They do not make the copies buildable in this directory. Restoration requires a current package location, dependency and build registration, and verification against current persistence, ownership, and audit requirements.
 
-- **Table names carry a `dsh_` prefix.** One database is often shared with tables the harness does not own.
-- **Applications are separated by a column, not by a schema.** MySQL has no schema inside a database, so `app` leads every primary key and every predicate. The PostgreSQL packages folded an application name into a schema identifier instead, which collapsed `order-svc` and `Order Service` onto one medium.
+PostgreSQL and OceanBase table layouts are not interchangeable. Follow the [deployment guide](../deploy/README.md) for the supported schema; these copies provide no automatic data conversion.
 
-There is no migration path between the two on-disk formats. A deployment moving from PostgreSQL to OceanBase starts against an empty database, in line with the repository's [pre-release stance](../AGENTS.md).
+<a id="dev-note"></a>
+## Dev Note
 
-To bring one back, move its directory under `packages/<group>/`, restore its `tsconfig.json` references and the `tsconfig.host.json` entry, and re-add it to the bundle that mounts it.
+None.

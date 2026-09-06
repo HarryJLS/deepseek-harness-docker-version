@@ -62,6 +62,7 @@ const PACKAGE_LIBRARIES: Readonly<Record<string, string>> = {
   'packages/hooks/hook-protocol': 'Shared wire-protocol library between the hook bridges.',
   'packages/identity/anonymous-user-id': 'Harness-home identity helper with no plugin registration.',
   'packages/identity/user-context': 'Async-local request identity helpers with no plugin registration.',
+  'packages/nacos/nacos-client': 'Nacos transport and document library with no plugin registration.',
   'packages/sandbox/sandbox-windows-acl': 'Windows ACL sandbox library consumed by sandbox-local.',
   'packages/sdk/client': 'Client-process library; the spawned runtime owns plugin behavior.',
   'packages/sdk/protocol': 'Wire-protocol library with type declarations only.',

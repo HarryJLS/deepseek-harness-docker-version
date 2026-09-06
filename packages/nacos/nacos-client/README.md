@@ -1,38 +1,66 @@
 ---
-description: "The Nacos gRPC client for maintainers building or debugging a harness plugin backed by Nacos configuration."
-kind: "package-reference"
+description: "Read, publish, and watch Nacos configuration through a shared gRPC client and document library."
+kind: "package-library"
 ---
 
 # @deepseek-ai/dsh-nacos-client
 
+English | [中文](README.zh.md)
+
 ## Summary
 
-`dsh-nacos-client` speaks the protocol a Nacos server actually offers its clients. Nacos 3.x removed the v1 HTTP config API, so a client that wants change PUSH rather than polling must use gRPC; this package owns that conversation and exposes it as read, publish, and watch. Above it, `NacosDocument` holds one entry open as a live document: read once, updated by every server push, and written as a read-modify-write behind every earlier write. Reconnection is part of the contract — a dropped stream re-handshakes, re-registers every watch, and re-reads each watched key, because a change that landed while the stream was down produced no push.
+Read, publish, and watch Nacos configuration entries from a harness provider. `NacosDocument` adds a codec and serializes operations within one document instance. The package is a library, not a plugin to mount in `cordis.yml`.
 
 ## Table of Contents
 
 - [Use this package](#use-this-package)
+- [Connection fields](#connection-fields)
 - [Understand the implementation](#understand-the-implementation)
 - [Further Exploration](#further-exploration)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
 
 -----
 
 <a id="use-this-package"></a>
 ## Use this package
 
-Use this package to build a harness plugin whose configuration lives in Nacos. Most plugins want `NacosDocument` rather than the raw client: it already owns the connection, the watch, and the write serialization, leaving the plugin to supply a codec and decide what a change means.
+Use `NacosDocument` for one entry, or `NacosConfigClient` for several entries on one connection. This example reads and updates a text entry, then releases its listener and connection.
 
 ```ts
-const entry = nacosDocument(config, 'my-plugin.yaml', { parse, render })
-const current = await entry.open(next => applyChange(next))
-await entry.write(document => ({ ...document, section: value }))
+import { nacosDocument } from '@deepseek-ai/dsh-nacos-client'
+
+const entry = nacosDocument({ host: '127.0.0.1' }, 'my-plugin.txt', {
+  parse: content => content ?? '',
+  render: document => document,
+})
+entry.setErrorHandler(console.error)
+try {
+  await entry.connect()
+  console.log(await entry.read())
+  await entry.watch(console.log)
+  await entry.write(current => `${current}\nReady.`)
+} finally {
+  entry.close()
+}
 ```
 
-`nacosEntrySchema` is the schemastery field set for the connection half of a plugin's config, so every Nacos-backed plugin accepts the same fields with the same defaults and the same secret marking.
+A long-lived provider keeps the document open until disposal. Writes re-read the entry before applying the edit; `exclusive` also allows an asynchronous decision followed by `publish`. Neither operation is a distributed lock or compare-and-swap across replicas.
 
-The raw `NacosConfigClient` is for a caller that needs several entries on one connection, or a request the document abstraction does not expose.
+<a id="connection-fields"></a>
+## Connection fields
+
+`nacosEntrySchema` supplies the connection fields that Nacos-backed plugins spread into their own schemas. Each plugin owns its data id separately.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `host` | required | Server host without a scheme or port |
+| `port` | `8848` | HTTP port; the gRPC port is this value plus `1000` |
+| `namespace` | `''` | Namespace id; empty selects public |
+| `group` | `DEFAULT_GROUP` | Configuration group |
+| `username`, `password` | unset | Optional Nacos authentication |
+| `requestTimeoutMs` | `10000` | Timeout for one request |
 
 -----
 
@@ -40,56 +68,44 @@ The raw `NacosConfigClient` is for a caller that needs several entries on one co
 ## Understand the implementation
 
 <details>
-<summary>Implementation internals — click to expand</summary>
+<summary>Implementation internals</summary>
 
-### Design philosophy
+[client.ts](src/client.ts) owns the handshake, reads, publishing, push acknowledgements, and reconnection. Each client uses distinct gRPC channel options so connection pooling cannot merge separate Nacos registrations. Reconnection registers watches again and re-reads their entries.
 
-- **The wire proto is inline.** `descriptor.ts` carries the protobufjs JSON descriptor transcribed from the server's own `nacos_grpc_service.proto`, so no `.proto` asset has to travel next to the bundled output. Field numbers must match the server exactly; a wrong one decodes to an empty payload rather than an error, which is why they are pinned by test.
-- **Registration is a barrier.** Nacos associates a connection through the bi-stream's `ConnectionSetupRequest` and answers with `SetupAckRequest`. A unary call issued before that arrives is refused with "Connection is unregistered", so `connect()` waits for the ack — with a timer fallback for a server that does not negotiate abilities, matching the reference client.
-- **A push must be acknowledged.** An unanswered `ConfigChangeNotifyRequest` makes the server treat the connection as unhealthy and eventually drop it.
-- **A push announces, it does not carry.** The change notice names the key; the content comes from a follow-up read, which is also what re-arms the MD5 comparison.
-- **Writes are read-modify-write.** One entry backs every section its owner holds, so rendering from a locally cached copy would drop whatever another replica published in between.
-
-### Source map
-
-| File | Role |
-|---|---|
-| [`src/client.ts`](src/client.ts) | The gRPC client: handshake, read, publish, watch, push acknowledgement, reconnect |
-| [`src/document.ts`](src/document.ts) | One entry as a live document, plus the shared connection config and its schema |
-| [`src/descriptor.ts`](src/descriptor.ts) | The wire proto as a protobufjs JSON descriptor, and the gRPC port offset |
+[document.ts](src/document.ts) owns parsing and the per-document operation queue. Background failures reach the installed error handler. [descriptor.ts](src/descriptor.ts) owns the inline wire descriptor and port offset.
 
 </details>
-
------
 
 <a id="further-exploration"></a>
 ## Further Exploration
 
-- [Nacos group map](../README.md) — the providers built on this client.
-- [Container deployment guide](../../../deploy/README.md) — how a deployment configures the entries.
-
------
+- [Nacos providers](../README.md)
+- [Container deployment](../../../deploy/README.md)
 
 <a id="model-experience"></a>
 ## Model Experience
 
-None. This package registers nothing model-facing; it is a transport library.
+None, as this transport library registers no model-facing content.
 
 #### KV Cache effect
 
-No direct invalidation; the consuming plugin owns any request-prefix changes.
-
-### One connection per client
-
-Every client forces its own HTTP/2 connection by passing a unique channel option. grpc-js pools subchannels by (target, credentials, options), Nacos identifies a client connection by its source address, and a harness process runs several Nacos-backed plugins at once — so clients built with identical options share a connection, share a registration, and the one the server displaces goes silently deaf: it keeps answering reads while never seeing another change.
+Consumers own any request changes caused by configuration updates.
 
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
 
-These limits define when the package is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
+- Configuration only: naming and service discovery are not implemented.
+- The gRPC connection is insecure; crossing an untrusted network requires protected transport outside this client.
+- Reconnection targets one configured server address; client-side server rotation is not implemented.
+- Concurrent document writers in different instances can overwrite each other's changes, including changes to different sections.
 
-- **Configuration only** — the naming and service-discovery halves of Nacos are not implemented; this client speaks the config protocol.
-- **No transport security** — the connection is insecure gRPC. A deployment crossing an untrusted network needs a sidecar or a service mesh.
-- **One server, no cluster failover** — the client connects to the configured address and reconnects to it. A Nacos cluster behind one address works; client-side server-list rotation does not exist.
-- **MD5 comparison, not content diffing** — a listener fires on any change to the entry, so a plugin holding several sections in one entry re-reads all of them when any one changes.
+<a id="dev-note"></a>
+### Dev Note
+
+<details>
+<summary>Working context for maintainers</summary>
+
+None.
+
+</details>

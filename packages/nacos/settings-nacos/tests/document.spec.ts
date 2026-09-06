@@ -8,7 +8,20 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { parseDocument } from '../src/index.ts'
+import z from '@deepseek-ai/schemastery'
+import { NacosSettingsProvider, parseDocument } from '../src/index.ts'
+
+describe('provider configuration', () => {
+  it('resolves the documented entry and writable defaults', () => {
+    expect(NacosSettingsProvider.Config({ host: 'nacos' })).toMatchObject({
+      host: 'nacos',
+      dataId: 'dsh-settings.yaml',
+      writable: true,
+    })
+    expect(NacosSettingsProvider.Config({ host: 'nacos', writable: false }).writable).toBe(false)
+    expect(() => z.resolve({}, NacosSettingsProvider.Config, {})).toThrow()
+  })
+})
 
 describe('parseDocument', () => {
   it('treats an absent or blank entry as an empty document', () => {

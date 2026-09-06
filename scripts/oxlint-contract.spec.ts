@@ -207,6 +207,32 @@ export const longProbe = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 +
     expect(result.status, normalizedOutput(result)).toBe(0)
   })
 
+  it.each(['.oxlintrc.json', '.oxlintrc.staged.json'])(
+    '%s excludes retired backups without excluding active source',
+    async (config) => {
+      const path = join(repositoryRoot, 'scripts', `backup-lint-probe-${randomUUID()}.ts`)
+      try {
+        const backupOnly = runOxlint(['--config', config, '--no-error-on-unmatched-pattern', 'backup'])
+        expect(backupOnly.error).toBeUndefined()
+        expect(backupOnly.status, normalizedOutput(backupOnly)).toBe(0)
+
+        await writeFile(path, 'export const value={answer:1};\n')
+        const active = runOxlint(['--config', config, '--format', 'unix', 'backup', relative(repositoryRoot, path)])
+        const output = normalizedOutput(active)
+        expect(active.error).toBeUndefined()
+        expect(active.status, output).toBe(1)
+        expect(output).toContain('@stylistic')
+        expect(output).not.toContain('backup/postgres-schema')
+        expect(output).not.toContain('backup/storage-postgres')
+        expect(output).not.toContain('backup/session-persistence-postgres')
+        expect(output).not.toContain('backup/attachment-postgres')
+      } finally {
+        await rm(path, { force: true })
+      }
+    },
+    90_000,
+  )
+
   it('keeps repository lint workflows Oxlint-only', async () => {
     const packageJson = JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8')) as unknown
     if (!isRecord(packageJson) || !isRecord(packageJson.scripts) || !isRecord(packageJson.devDependencies)) {
