@@ -5,7 +5,7 @@ import {
   assertMysqlTable, mysqlTable, tablesPresent, toJsonText, mysqlIdGenerator, mysqlAuditValues,
   MYSQL_AUDIT_DDL, MYSQL_AUDIT_COLUMNS, MYSQL_AUDIT_VALUES,
 } from '@deepseek-ai/dsh-mysql-schema'
-import { canAccessUser, DEFAULT_USER_ID, parseUserId, requestUserId, type UserId } from '@deepseek-ai/dsh-user-context'
+import { canAccessUser, DEFAULT_USER_ID, parseUserId, requestUserId } from '@deepseek-ai/dsh-user-context'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import {
   SessionPersistenceRevision,
@@ -14,6 +14,7 @@ import {
   type StoredPrefix,
   type StoredSuffix,
 } from '@deepseek-ai/dsh-session-persistence'
+import type { RedisSessionCache } from './redis-cache.ts'
 
 const SESSION_TABLE = mysqlTable('session')
 const EVENT_TABLE = mysqlTable('session_event')
@@ -48,6 +49,7 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
     private readonly app: string,
     database: string,
     snowflakeWorkerId = 0,
+    private readonly cache?: RedisSessionCache,
   ) {
     this.source = `mysql:${database}:${app}`
     this.nextId = mysqlIdGenerator(snowflakeWorkerId)
@@ -93,10 +95,20 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
     return userId === undefined ? { sql: '', values: [] } : { sql: ' AND user_id = ?', values: [userId] }
   }
 
-  private async header(id: SessionId): Promise<mysql.RowDataPacket | undefined> {
+  private async header(id: SessionId, includeExtent = false): Promise<mysql.RowDataPacket | undefined> {
     const owner = this.ownerPredicate()
+    const extent = includeExtent
+      ? `,
+         (SELECT COALESCE(MAX(seq) + 1, 0) FROM \`${EVENT_TABLE}\` e
+          WHERE e.app = s.app AND e.session_id = s.session_id AND e.user_id = s.user_id
+            AND e.is_deleted = 'N') AS next_seq,
+         (SELECT COUNT(*) FROM \`${EVENT_TABLE}\` e
+          WHERE e.app = s.app AND e.session_id = s.session_id AND e.user_id = s.user_id
+            AND e.is_deleted = 'N') AS event_count`
+      : ''
     const [rows] = await this.pool.query<mysql.RowDataPacket[]>(
-      `SELECT CAST(id AS CHAR) AS row_id, meta, revision, user_id FROM \`${SESSION_TABLE}\`
+      `SELECT CAST(id AS CHAR) AS row_id, meta, revision, user_id${extent}
+       FROM \`${SESSION_TABLE}\` s
        WHERE app = ? AND session_id = ? AND is_deleted = 'N'${owner.sql}`,
       [this.app, id, ...owner.values],
     )
@@ -105,10 +117,10 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
 
   async loadStored(id: SessionId, signal?: AbortSignal): Promise<StoredPrefix<never> | undefined> {
     signal?.throwIfAborted()
-    const row = await this.header(id)
+    const row = await this.header(id, true)
     if (row === undefined) return undefined
     const meta = toHeader(row, id)
-    const events = await this.readEvents(id, meta.userId ?? DEFAULT_USER_ID, 0, signal)
+    const events = await this.readEvents(meta, row, 0, signal)
     return { meta, events, revision: revisionToken(this.source, row) }
   }
 
@@ -121,10 +133,10 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
 
   async loadStoredFrom(id: SessionId, fromSeq: number, signal?: AbortSignal): Promise<StoredSuffix | undefined> {
     signal?.throwIfAborted()
-    const row = await this.header(id)
+    const row = await this.header(id, true)
     if (row === undefined) return undefined
     const meta = toHeader(row, id)
-    return { meta, events: await this.readEvents(id, meta.userId ?? DEFAULT_USER_ID, fromSeq, signal) }
+    return { meta, events: await this.readEvents(meta, row, fromSeq, signal) }
   }
 
   /** Materialize a header without changing the owner of an existing identity. */
@@ -136,21 +148,27 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
   }
 
   async appendBatch(meta: SessionHeader, events: readonly SessionEvent[], isMaterialized: boolean): Promise<void> {
+    let rowId = ''
     await this.transaction(async (conn) => {
       if (!isMaterialized) await this.insertHeader(conn, meta, 0)
-      await this.lockOwner(conn, meta)
+      rowId = await this.lockOwner(conn, meta)
+      await this.assertNextSeq(conn, meta, events)
       await this.insertEvents(conn, meta, events)
       await this.bumpRevision(conn, meta)
     })
+    await this.cache?.write(meta, rowId, events)
   }
 
   async commitRepair(meta: SessionHeader, _tornMarker: undefined, closers: readonly SessionEvent[]): Promise<void> {
     if (closers.length === 0) return
+    let rowId = ''
     await this.transaction(async (conn) => {
-      await this.lockOwner(conn, meta)
+      rowId = await this.lockOwner(conn, meta)
+      await this.assertNextSeq(conn, meta, closers)
       await this.insertEvents(conn, meta, closers)
       await this.bumpRevision(conn, meta)
     })
+    await this.cache?.write(meta, rowId, closers)
   }
 
   private async transaction(operation: (conn: mysql.PoolConnection) => Promise<void>): Promise<void> {
@@ -180,15 +198,32 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
   }
 
   /** Lock the immutable owner before appending, including concurrent explicit-id creation. */
-  private async lockOwner(conn: mysql.PoolConnection, meta: SessionHeader): Promise<void> {
+  private async lockOwner(conn: mysql.PoolConnection, meta: SessionHeader): Promise<string> {
     const owner = meta.userId ?? DEFAULT_USER_ID
     if (!canAccessUser(owner)) throw new Error('session-persistence-mysql: session not found')
     const [rows] = await conn.query<mysql.RowDataPacket[]>(
-      `SELECT user_id FROM \`${SESSION_TABLE}\`
+      `SELECT CAST(id AS CHAR) AS row_id, user_id FROM \`${SESSION_TABLE}\`
        WHERE app = ? AND session_id = ? AND is_deleted = 'N' FOR UPDATE`,
       [this.app, meta.id],
     )
     if (rows[0]?.user_id !== owner) throw new Error('session-persistence-mysql: session not found')
+    return String(rows[0].row_id)
+  }
+
+  private async assertNextSeq(conn: mysql.PoolConnection, meta: SessionHeader, events: readonly SessionEvent[]): Promise<void> {
+    if (events.length === 0) return
+    const [rows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT COALESCE(MAX(seq) + 1, 0) AS next_seq FROM \`${EVENT_TABLE}\`
+       WHERE app = ? AND session_id = ? AND user_id = ?`,
+      [this.app, meta.id, meta.userId ?? DEFAULT_USER_ID],
+    )
+    const nextSeq = Number(rows[0]?.next_seq)
+    if (!Number.isSafeInteger(nextSeq) || nextSeq < 0) {
+      throw new Error(`session-persistence-mysql: invalid stored event extent for session ${meta.id}`)
+    }
+    if (events.some((event, index) => event.seq !== nextSeq + index)) {
+      throw new Error(`session-persistence-mysql: session ${meta.id} was changed by another writer or has a noncontiguous batch`)
+    }
   }
 
   async list(signal?: AbortSignal): Promise<SessionHeader[]> {
@@ -217,27 +252,47 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
 
   locate(): undefined { return undefined }
 
-  async close(): Promise<void> { await this.pool.end() }
+  async close(): Promise<void> {
+    this.cache?.close()
+    await this.pool.end()
+  }
 
-  private async readEvents(id: SessionId, owner: UserId, fromSeq: number, signal?: AbortSignal): Promise<SessionEvent[]> {
+  private async readEvents(
+    meta: SessionHeader,
+    row: mysql.RowDataPacket,
+    fromSeq: number,
+    signal?: AbortSignal,
+  ): Promise<SessionEvent[]> {
     const events: SessionEvent[] = []
-    let afterSeq = fromSeq - 1
-    for (;;) {
+    const rowId = String(row.row_id)
+    const nextSeq = Number(row.next_seq)
+    const eventCount = Number(row.event_count)
+    if (!Number.isSafeInteger(nextSeq) || nextSeq < 0
+      || !Number.isSafeInteger(eventCount) || eventCount < 0 || eventCount > nextSeq) {
+      throw new Error(`session-persistence-mysql: invalid stored event extent for session ${meta.id}`)
+    }
+    // A soft-deleted event must not reappear from Redis while the coordinator reports a damaged prefix.
+    const cache = eventCount === nextSeq ? this.cache : undefined
+    for (let cursor = fromSeq; cursor < nextSeq; cursor += MYSQL_SESSION_READ_PAGE_SIZE) {
       signal?.throwIfAborted()
+      const end = Math.min(cursor + MYSQL_SESSION_READ_PAGE_SIZE, nextSeq)
+      const cached = await cache?.read(meta, rowId, cursor, end, signal)
+      if (cached !== undefined) {
+        events.push(...cached)
+        continue
+      }
       const [page] = await this.pool.query<mysql.RowDataPacket[]>(
         `SELECT seq, event FROM \`${EVENT_TABLE}\`
-         WHERE app = ? AND session_id = ? AND user_id = ? AND is_deleted = 'N' AND seq > ?
+         WHERE app = ? AND session_id = ? AND user_id = ? AND is_deleted = 'N' AND seq >= ? AND seq < ?
          ORDER BY seq ASC LIMIT ?`,
-        [this.app, id, owner, afterSeq, MYSQL_SESSION_READ_PAGE_SIZE],
+        [this.app, meta.id, meta.userId ?? DEFAULT_USER_ID, cursor, end, MYSQL_SESSION_READ_PAGE_SIZE],
       )
       signal?.throwIfAborted()
-      for (const entry of page) events.push(entry.event as SessionEvent)
-      if (page.length < MYSQL_SESSION_READ_PAGE_SIZE) break
-      const nextSeq: unknown = page.at(-1)?.seq
-      if (typeof nextSeq !== 'number' || !Number.isSafeInteger(nextSeq) || nextSeq <= afterSeq) {
-        throw new Error(`session-persistence-mysql: invalid event page cursor for session ${id}`)
+      const batch = page.map(entry => entry.event as SessionEvent)
+      events.push(...batch)
+      if (batch.length === end - cursor && batch.every((event, offset) => event.seq === cursor + offset)) {
+        await cache?.write(meta, rowId, batch)
       }
-      afterSeq = nextSeq
     }
     return events
   }

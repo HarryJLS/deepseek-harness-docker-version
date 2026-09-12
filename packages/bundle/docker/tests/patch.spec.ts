@@ -28,6 +28,7 @@ interface PatchRow {
   id?: string
   name?: string
   disabled?: boolean
+  config?: Record<string, unknown> | string
   insert?: { id: string; name: string; config?: Record<string, unknown> | string }[]
 }
 
@@ -70,12 +71,23 @@ describe('provider swaps', () => {
     ['credentials', 'credentials-nacos'],
     ['storage-json', 'storage-mysql'],
     ['session-persistence-jsonl', 'session-persistence-mysql'],
-    ['attachment-local', 'attachment-mysql'],
   ])('replaces %s with %s', (replaced, replacement) => {
     // Two providers of one service both mount and collide; the disable is what
     // makes a swap a swap rather than a duplicate.
     expect(disabled.has(replaced), `${replaced} must be disabled`).toBe(true)
     expect(inserted.some(row => row.id === replacement)).toBe(true)
+  })
+
+  it('uses temporary local attachments without mounting a database object store', () => {
+    expect(disabled.has('attachment-local')).toBe(false)
+    expect(patch.find(row => row.id === 'attachment-local')?.config)
+      .toBe('JSON.parse(process.env.DSH_ATTACHMENTS_CONFIG)')
+    expect(inserted.some(row => row.id === 'attachment-mysql')).toBe(false)
+  })
+
+  it('loads Redis settings from the Nacos-resolved secret document', () => {
+    expect(inserted.find(row => row.id === 'session-persistence-mysql')?.config)
+      .toContain('redis: JSON.parse(process.env.DSH_REDIS_SECRET)')
   })
 })
 
@@ -107,7 +119,7 @@ describe('application scoping', () => {
     // its rows while another still writes `dsh` splits one deployment's state
     // across two applications in one table, and nothing reports it until a
     // session cannot find its own rows.
-    expect(databaseRows.length).toBe(3)
+    expect(databaseRows.length).toBe(2)
     for (const row of databaseRows) {
       expect(row.config).toBeTypeOf('string')
       expect(row.config, `${row.id} is not scoped by DSH_APP_NAME`).toContain('app: process.env.DSH_APP_NAME')

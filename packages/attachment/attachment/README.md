@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-You can attach images to prompts and commands, and the harness keeps provider-independent normalized versions durably: each source image is admitted and normalized before your message is processed, reappears in conversation history, and is projected to the selected model route in later turns of the same session. The shipped `dsh` composition enables this with no setup. Attached images survive restarts, while browser paths, provider URLs, local storage paths, and base64 never enter durable session events. Only raster formats (PNG, JPEG, WebP, GIF) are accepted, and unsent composer drafts stay in the browser until you submit. Stored images are never deleted automatically, and non-image files, audio, and video are not supported yet.
+You can attach images to prompts and commands; the default `dsh` composition normalizes and stores them durably before processing the message. Session events carry references and verified metadata, never image bytes, browser object URLs, or provider URLs. Raster formats (PNG, JPEG, WebP, GIF) are accepted, and unsent drafts remain in the browser. A deployment may explicitly select [temporary local storage](../attachment-local/README.md#temporary-storage), whose references also retain a relative path and whose bytes need not survive restart.
 
 ## Table of Contents
 

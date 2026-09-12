@@ -27,7 +27,7 @@ kind: "package-bundle"
 
 使用根目录 [Dockerfile](../../../Dockerfile) 并遵循[部署指南](../../../deploy/README.zh.md)。入口程序在组合配置档前校验 Nacos 中的数据库设置。Nacos 凭据属于源码中的启动配置，不是运维环境变量输入。
 
-本包用 Nacos 提供方替代文件设置和凭据，用 storage-mysql 替代 storage-json，用 session-persistence-mysql 替代 session-persistence-jsonl，并用 attachment-mysql 替代 attachment-local。存储域选择 mysql 后端。
+本包用 Nacos 提供方替代文件设置和凭据，用 storage-mysql 替代 storage-json，并用带 Redis 事件缓存的 session-persistence-mysql 替代 session-persistence-jsonl。存储域选择 mysql 后端。attachment-local 使用 Nacos 配置的临时目录；两个上下文存储都不接收图片字节。
 
 服务器在全部网卡上监听 DSH_PORT，默认 3080。此部署关闭浏览器令牌认证与 Host 检查。可信平台网关必须认证用户，并在 HTTP 请求和 WebSocket 升级中注入 X-User-Id；缺失用户信息时使用 `-`。
 
@@ -39,7 +39,7 @@ kind: "package-bundle"
 <details>
 <summary>实现细节</summary>
 
-补丁禁用被替代的提供方，并插入数据库或 Nacos 实现。每个具名插件都声明为部署包依赖。数据库变更需要重启，支持的设置和已安装插件的补丁可实时更新。入口程序在 Loader 解析配置档模块前安装清单中的包。
+补丁禁用被替代的提供方，并插入数据库或 Nacos 实现。每个具名插件都声明为部署包依赖。数据库、Redis 与临时目录变更需要重启，支持的设置和已安装插件的补丁可实时更新。入口程序在 Loader 解析配置档模块前安装清单中的包。
 
 </details>
 

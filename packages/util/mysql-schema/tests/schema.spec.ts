@@ -182,15 +182,17 @@ describe('toJsonText', () => {
   /** One NUL, built without writing a control character into this file. */
   const NUL = String.fromCharCode(0)
 
-  it('replaces the character subprocess output smuggles into a document', () => {
+  it('preserves NUL through JSON escaping', () => {
     const encoded = toJsonText({ out: `a${NUL}b` })
-    expect(encoded).not.toContain(String.raw`\u0000`)
-    expect(JSON.parse(encoded)).toEqual({ out: 'a\ufffdb' })
+    expect(encoded).toContain(String.raw`\u0000`)
+    expect(JSON.parse(encoded)).toEqual({ out: `a${NUL}b` })
   })
 
-  it('replaces every occurrence, not just the first', () => {
+  it('preserves repeated control characters in values and keys', () => {
     expect(JSON.parse(toJsonText({ s: `${NUL}a${NUL}b${NUL}` })))
-      .toEqual({ s: '\ufffda\ufffdb\ufffd' })
+      .toEqual({ s: `${NUL}a${NUL}b${NUL}` })
+    const value = { [`key${NUL}`]: `${NUL}\t\n\b` }
+    expect(JSON.parse(toJsonText(value))).toEqual(value)
   })
 
   it('leaves every other document identical to JSON.stringify', () => {

@@ -43,7 +43,7 @@
     "@deepseek-ai/dsh-invariants": "workspace:^"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-attachment-mysql": "workspace:^",
+    "@deepseek-ai/dsh-attachment-local": "workspace:^",
     "@deepseek-ai/dsh-credentials-nacos": "workspace:^",
     "@deepseek-ai/dsh-nacos-file-mirror": "workspace:^",
     "@deepseek-ai/dsh-session-persistence-mysql": "workspace:^",

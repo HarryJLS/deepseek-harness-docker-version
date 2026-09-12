@@ -1,10 +1,7 @@
 # DeepSeek Harness — container stack.
 #
-# Three services: the harness, the Nacos it reads live configuration from, and
-# the OceanBase (MySQL mode) it keeps durable state in. The only bind mount is
-# the provisioning script the database runs once at bootstrap; every writable
-# path the harness needs lives in one of the two backing services, so a
-# replaced container starts clean and loses nothing.
+# The application reads Nacos configuration, caches session events in Redis,
+# and commits durable history to OceanBase. Image files are temporary.
 #
 #   docker compose -f deploy/docker-compose.yml up -d --build
 #
@@ -16,6 +13,15 @@
 name: dsh
 
 services:
+  redis:
+    image: redis:7.4-alpine
+    command: ['redis-server', '--save', '', '--appendonly', 'no', '--maxmemory', '256mb', '--maxmemory-policy', 'allkeys-lru']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   oceanbase:
     image: oceanbase/oceanbase-ce:4.3.5-lts
     environment:
@@ -90,6 +96,8 @@ services:
         # from so the client build metadata is honest.
         DSH_CLIENT_COMMIT_HASH: ${DSH_CLIENT_COMMIT_HASH:-0000000}
     depends_on:
+      redis:
+        condition: service_healthy
       oceanbase:
         condition: service_healthy
       nacos:
@@ -111,6 +119,7 @@ services:
       - '3080:3080'
     tmpfs:
       - /run:mode=0700
+      - /app/tmp/dsh-attachments:mode=0700
 
 volumes:
   obdata:

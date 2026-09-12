@@ -23,10 +23,6 @@ export interface MysqlQueryable {
   query(sql: string, values?: string[]): Promise<unknown>
 }
 
-/** The character JSON text carries badly across tools, and the one recording its absence. */
-const NUL = '\u0000'
-const REPLACEMENT = '\ufffd'
-
 /** Prefix every harness-owned table carries, so a shared database stays unambiguous. */
 export const TABLE_PREFIX = 'dsh_'
 
@@ -68,24 +64,14 @@ export function resolveMysqlApp(config: MysqlConnectionConfig): string {
 }
 
 /**
- * Serialize one value as the JSON text a `json` column accepts.
- *
- * A NUL reaches a harness document from one place: subprocess output, decoded
- * with `Buffer.toString('utf8')`, which carries a raw NUL byte through as
- * U+0000. It is replaced rather than removed so U+FFFD records that something
- * unrepresentable was there, and the rows stay queryable with `->` and `->>`
- * for an operator reading the database directly.
- *
- * The substitution runs over string VALUES, through the serializer's replacer,
- * rather than over the JSON text it produces: rewriting the text would also
- * corrupt a document that legitimately contains the six literal characters of
- * a `\u0000` escape.
- * @param value - the document to store.
- * @returns JSON text safe to insert into a `json` column.
+ * Serialize a JSON document without changing string values or keys.
+ * JSON escaping preserves NUL and other control characters supported by
+ * OceanBase/MySQL JSON columns, so durable reads match the original events.
+ * @param value - the JSON-serializable document to store.
+ * @returns JSON text for a bound SQL parameter.
  */
 export function toJsonText(value: unknown): string {
-  return JSON.stringify(value, (_key, entry: unknown) =>
-    typeof entry === 'string' ? entry.replaceAll(NUL, REPLACEMENT) : entry)
+  return JSON.stringify(value)
 }
 
 /**

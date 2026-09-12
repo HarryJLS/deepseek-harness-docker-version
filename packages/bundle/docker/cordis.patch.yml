@@ -19,14 +19,9 @@
 # application owns its Nacos (its own namespace or server), and that ownership
 # is what separates one application's configuration from another's.
 #
-# The database is the one backend applications DO share, so it is the one thing
-# that must be scoped: `DSH_APP_NAME` is written into the `app` column that
-# leads every harness table's primary key. OceanBase speaks MySQL, where a
-# schema IS a database, so there is no namespace to give each application — the
-# column is the separation, and a row not scoped by it is a row two
-# applications overwrite. The name is resolved by the entrypoint — from the
-# settings entry's `deployment.appName`, else this variable — and reaches the
-# rows below as an ordinary environment variable.
+# Database rows and Redis keys are scoped by Nacos's deployment.appName.
+# The entrypoint supplies DSH_APP_NAME and the *_SECRET values below as internal
+# transport for validated Nacos settings, not as operator configuration fallbacks.
 #
 # A patch replaces a row's whole `config`, so each row below restates every key
 # it owns, and a provider swap is a `disabled` plus an `insert` rather than a
@@ -110,7 +105,7 @@
   config:
     backend: mysql
 
-# ── session logs: OceanBase ────────────────────────────────────────────────
+# ── session logs: Redis cache over OceanBase ────────────────────────────────
 #
 # The JSONL backend writes one artifact per session under the harness home.
 # That is the state a container can least afford to lose: a replaced replica
@@ -128,7 +123,7 @@
     - id: session-persistence-mysql
       name: '@deepseek-ai/dsh-session-persistence-mysql'
       config: !!js |
-        ({ ...JSON.parse(process.env.DSH_DATABASE_SECRET), app: process.env.DSH_APP_NAME })
+        ({ ...JSON.parse(process.env.DSH_DATABASE_SECRET), app: process.env.DSH_APP_NAME, redis: JSON.parse(process.env.DSH_REDIS_SECRET) })
 
 # ── credentials: Nacos ─────────────────────────────────────────────────────
 #
@@ -155,21 +150,12 @@
         username: !!js process.env.DSH_NACOS_USERNAME
         password: !!js process.env.DSH_NACOS_PASSWORD
 
-# ── attachments: OceanBase ─────────────────────────────────────────────────
+# ── attachments: temporary files, references only in session storage ────────
 #
-# Normalized image bytes back references the session log records, so losing
-# them breaks a conversation's history rather than merely degrading it. They
-# move to the database; the derived model-request variants deliberately do not,
-# because each is a deterministic function of (reference, route policy) and a
-# replaced container regenerates identical bytes on its own filesystem.
+# Neither Redis nor OceanBase receives image bytes. The local provider records
+# relative file references and replaces missing images with logged path text.
 - id: attachment-local
-  disabled: true
-
-- insert:
-    - id: attachment-mysql
-      name: '@deepseek-ai/dsh-attachment-mysql'
-      config: !!js |
-        ({ ...JSON.parse(process.env.DSH_DATABASE_SECRET), app: process.env.DSH_APP_NAME })
+  config: !!js JSON.parse(process.env.DSH_ATTACHMENTS_CONFIG)
 
 # ── mirrored entries: Nacos to file ────────────────────────────────────────
 #

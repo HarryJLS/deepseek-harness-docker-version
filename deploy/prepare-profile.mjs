@@ -125,10 +125,10 @@ async function readNacosEntries(dataIds) {
   return out
 }
 
-/** Read and validate the required database configuration from Nacos. */
+/** Read and validate the required database and Redis configuration from Nacos. */
 async function resolveDeployment(content) {
   if (content === undefined || content.trim() === '') {
-    throw new Error('entrypoint: the Nacos settings entry is required and must declare deployment.database')
+    throw new Error('entrypoint: the Nacos settings entry is required and must declare deployment.database and deployment.redis')
   }
   const { parse } = await import(YAML_MODULE)
   return resolveDeploymentDocument(parse(content))

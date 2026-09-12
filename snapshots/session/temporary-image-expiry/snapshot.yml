@@ -1,0 +1,9 @@
+version: 1
+scenario: temporary-image-expiry
+profile: headless
+composition: temporary-image
+recording: authored
+header:
+  class: temporary-image
+  pin: true
+  changes: 1

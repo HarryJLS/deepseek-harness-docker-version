@@ -1,4 +1,4 @@
-/** Durable attachment storage seam (`ctx.attachments`). @module @deepseek-ai/dsh-attachment */
+/** Attachment storage seam (`ctx.attachments`), including explicitly temporary file references. @module @deepseek-ai/dsh-attachment */
 
 import { Context, Service } from '@deepseek-ai/cordis'
 import { AttachmentError } from './error.ts'
@@ -34,7 +34,7 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** Immutable binary attachment service. Implementations validate bytes before publishing a reference. */
+/** Immutable binary attachment service. Temporary deployments explicitly identify non-durable file references. */
 export abstract class AttachmentStore extends Service {
   constructor(ctx: Context) {
     super(ctx, 'attachments')
@@ -57,7 +57,7 @@ export abstract class AttachmentStore extends Service {
    * references, although already published content-addressed objects may stay
    * unreachable until a future retention policy collects them.
    * @param inputs - encoded images in their owning message order.
-   * @returns durable references in the exact input order.
+   * @returns references in the exact input order.
    */
   protected validateImageBatch(inputs: readonly SaveImageAttachment[]): void {
     const { maxImagesPerMessage, maxMessageImageBytes, mediaTypes } = this.imageLimits
@@ -76,9 +76,9 @@ export abstract class AttachmentStore extends Service {
   }
 
   /**
-   * Validate and durably commit one ordered image batch.
+   * Validate and publish one ordered image batch before its owning events.
    * @param inputs - encoded images in owning-message order.
-   * @returns durable normalized attachment references in the same order after every member succeeds.
+   * @returns normalized references in input order; explicitly temporary providers do not promise byte retention.
    */
   async saveImages(inputs: readonly SaveImageAttachment[]): Promise<readonly ImageAttachmentRef[]> {
     this.validateImageBatch(inputs)
@@ -90,12 +90,13 @@ export abstract class AttachmentStore extends Service {
   }
 
   /**
-   * Validate and durably commit one image before its owning session event is appended.
-   * The returned reference describes the persisted normalized image. When
+   * Validate and publish one image before its owning session event is appended.
+   * The returned reference describes the normalized image. Storage is durable
+   * unless the deployment explicitly selects temporary files. When
    * normalization reduces the raster, its `originalDimensions` records the
    * orientation-applied input dimensions.
    * @param input - encoded bytes, declared media type, and optional display name.
-   * @returns the durable content-addressed normalized image reference.
+   * @returns the content-addressed reference, with a relative path when storage is temporary.
    */
   abstract saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef>
 

@@ -333,6 +333,8 @@ export interface Config {
 export interface Config {
   /** Explicit harness home; omitted follows `DSH_HOME`, then `~/.dsh`. */
   dshHome?: string
+  /** Opt into temporary, user-scoped files under this process-relative subdirectory instead of durable DSH_HOME storage. */
+  temporaryRoot?: string
   /** Maximum encoded bytes accepted for one submitted image. Default: 20 MiB. */
   maxImageBytes?: number
   /** Maximum image count accepted in one submitted message. Default: 20. */
@@ -357,7 +359,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/attachment/attachment-local/src/index.ts:55`](../packages/attachment/attachment-local/src/index.ts)
+来源：[`packages/attachment/attachment-local/src/index.ts:58`](../packages/attachment/attachment-local/src/index.ts)
 
 <a id="deepseek-aidsh-attachment-mysql"></a>
 
@@ -1983,16 +1985,48 @@ export type JsonlCompression = 'zstd' | 'none'
 ```ts config-catalog
 /** Plugin configuration. */
 export interface Config extends MysqlConnectionConfig {
+  /** Optional shared event cache; container deployments require this configuration from Nacos. */
+  redis?: RedisSessionCacheConfig
   /** Maximum cold Session preparations retained for history-to-resume reuse. */
   preparedSessionCacheSize?: number
   /** Fixed live-event coalescing window; not a backend completion deadline. */
   writeBatchMaxDelayMs?: number
 }
+
+/** Redis connection and cache policy, supplied by the deployment's Nacos document. */
+export interface RedisSessionCacheConfig {
+  /** Redis hostname; TLS is controlled separately. */
+  host: string
+  /** Redis TCP port. */
+  port?: number
+  /** Redis ACL username; omit for password-only authentication. */
+  username?: string
+  /** Redis password; omit only for a server without authentication. */
+  password?: string
+  /** Redis logical database number. */
+  database?: number
+  /** Enable certificate-verified TLS. */
+  tls?: boolean
+  /** Fixed namespace shared by all Harness cache keys. */
+  keyPrefix?: 'dsh-'
+  /** Sliding expiration in seconds for every cached event and chunk. */
+  ttlSeconds?: number
+  /** Largest Redis string value, measured after UTF-8 encoding. */
+  maxChunkBytes?: number
+  /** Events larger than this byte limit remain database-only, without truncation. */
+  maxEventBytes?: number
+  /** Maximum commands in one Redis pipeline. */
+  batchSize?: number
+  /** Connection establishment deadline in milliseconds. */
+  connectTimeoutMs?: number
+  /** Per-command response deadline in milliseconds. */
+  commandTimeoutMs?: number
+}
 ```
 
 依赖：[`MysqlConnectionConfig`](../packages/util/mysql-schema/src/index.ts)
 
-来源：[`packages/session/session-persistence-mysql/src/index.ts:53`](../packages/session/session-persistence-mysql/src/index.ts)
+来源：[`packages/session/session-persistence-mysql/src/index.ts:50`](../packages/session/session-persistence-mysql/src/index.ts)
 
 <a id="deepseek-aidsh-session-persistence-sqlite"></a>
 

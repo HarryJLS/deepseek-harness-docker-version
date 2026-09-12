@@ -16,6 +16,8 @@ Connection scopes authenticated gateway requests by the configured user header, 
 
 The container reads and validates all database connection fields from Nacos before profile preparation. Missing configuration stops startup. Bootstrap passes the validated document through a secret-named internal environment variable and a mode-0600 file under `/run`; neither is an operator configuration fallback. The source-owned Nacos credentials are local-development examples, not production secrets. Existing incompatible table layouts are rejected; data conversion is an explicit operator action against a backup, not a runtime compatibility path.
 
+The [Redis context and temporary-attachment decision](2026-09-12-redis-session-context-and-temporary-attachments.md) extends this deployment configuration while preserving SQL ownership and audit rules.
+
 ## Alternatives considered
 
 **List-only filtering.** Direct session addresses, search results, cached preparations, and shared event streams remain reachable without enforcement at their owning readers and writers.

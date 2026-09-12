@@ -86,4 +86,17 @@ describe.skipIf(url === undefined)('OceanBase session rows', () => {
     await store.materializeHeader(header)
     expect(await store.readStoredRevision(header.id)).not.toBe(previous)
   })
+
+  it('preserves control characters and literal escapes in a cold database read', async () => {
+    const header = meta()
+    const events = [{
+      type: 'assistant/chunk' as const, seq: 0, time: 1,
+      data: { turn: 1, step: 1, chunk: {
+        type: 'text-delta' as const, index: 0, text: 'user-global\u0000AGENTS.md\t\n\\u0000',
+      } },
+    }]
+    await store.appendBatch(header, events, false)
+    expect((await store.loadStored(header.id))?.events).toEqual(events)
+    expect((await store.loadStoredFrom(header.id, 0))?.events).toEqual(events)
+  })
 })

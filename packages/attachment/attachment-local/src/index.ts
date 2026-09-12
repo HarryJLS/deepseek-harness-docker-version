@@ -1,9 +1,9 @@
-/** Local durable attachment backend rooted below `DSH_HOME`. @module @deepseek-ai/dsh-attachment-local */
+/** Local attachments with durable DSH_HOME storage or opt-in temporary, user-scoped files. @module @deepseek-ai/dsh-attachment-local */
 
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import { AttachmentError, AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type {
   ImageAttachmentLimits,
   ImageAttachmentRef,
@@ -13,10 +13,13 @@ import type {
   StoredImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import { currentUserId } from '@deepseek-ai/dsh-user-context'
 import type { NormalizationPolicy } from './normalization.ts'
 import { CompressionLimiter } from './compression-limiter.ts'
 import { commitPreparedImageFile, normalizedImagePath, prepareImageFile, readImageFile, validateImageFile } from './store.ts'
 import { readRequestImageFile, requestImageVariantId } from './request-image.ts'
+import { installTemporaryImageContext } from './temporary-context.ts'
+import type { PreparedImageFile } from './store.ts'
 
 export { canPassThroughNormalization, normalizeImage } from './normalization.ts'
 export type { NormalizedImage, NormalizationPolicy } from './normalization.ts'
@@ -55,6 +58,8 @@ export const MAX_IMAGE_COMPRESSION_CONCURRENCY = 8
 export interface Config {
   /** Explicit harness home; omitted follows `DSH_HOME`, then `~/.dsh`. */
   dshHome?: string
+  /** Opt into temporary, user-scoped files under this process-relative subdirectory instead of durable DSH_HOME storage. */
+  temporaryRoot?: string
   /** Maximum encoded bytes accepted for one submitted image. Default: 20 MiB. */
   maxImageBytes?: number
   /** Maximum image count accepted in one submitted message. Default: 20. */
@@ -139,10 +144,11 @@ class SharedRequest<T> {
   }
 }
 
-/** Persistent content-addressed local attachment store. */
+/** Content-addressed local attachments with an explicit temporary-file deployment policy. */
 export class LocalAttachmentStore extends AttachmentStore {
   static Config: z<Config> = z.object({
     dshHome: z.string(),
+    temporaryRoot: z.string(),
     maxImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_IMAGE_BYTES),
     maxImagesPerMessage: z.number().step(1).min(1).default(DEFAULT_MAX_IMAGES_PER_MESSAGE),
     maxMessageImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_MESSAGE_IMAGE_BYTES),
@@ -157,6 +163,7 @@ export class LocalAttachmentStore extends AttachmentStore {
 
   /** Absolute versioned storage root. */
   readonly root: string
+  private readonly temporary: boolean
   readonly imageLimits: ImageAttachmentLimits
   /** Resolved provider-independent normalization policy. */
   readonly normalizationPolicy: Readonly<NormalizationPolicy>
@@ -167,7 +174,20 @@ export class LocalAttachmentStore extends AttachmentStore {
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
-    this.root = resolve(join(resolveDshHome(config.dshHome), 'attachments', 'v1'))
+    this.temporary = config.temporaryRoot !== undefined
+    if (config.temporaryRoot !== undefined && (
+      config.temporaryRoot.trim() === '' || isAbsolute(config.temporaryRoot)
+      || config.temporaryRoot !== config.temporaryRoot.trim()
+      || config.temporaryRoot.startsWith('\\')
+      || /^[A-Za-z]:/u.test(config.temporaryRoot)
+      || config.temporaryRoot.split(/[/\\]/u).some(part => part === '..')
+      || resolve(config.temporaryRoot) === process.cwd()
+    )) {
+      throw new Error('attachment-local: temporaryRoot must name a process-relative subdirectory without parent traversal')
+    }
+    this.root = config.temporaryRoot === undefined
+      ? resolve(join(resolveDshHome(config.dshHome), 'attachments', 'v1'))
+      : resolve(config.temporaryRoot)
     this.imageLimits = Object.freeze({
       maxImageBytes: config.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES,
       maxImagesPerMessage: config.maxImagesPerMessage ?? DEFAULT_MAX_IMAGES_PER_MESSAGE,
@@ -191,6 +211,7 @@ export class LocalAttachmentStore extends AttachmentStore {
     }
     this.imageCompressionConcurrency = compressionConcurrency
     this.compression = new CompressionLimiter(compressionConcurrency)
+    if (this.temporary) installTemporaryImageContext(this.ctx, ref => this.imageHostPath(ref))
   }
 
   async validateImage(input: SaveImageAttachment): Promise<void> {
@@ -203,7 +224,7 @@ export class LocalAttachmentStore extends AttachmentStore {
       () => prepareImageFile(input, this.imageLimits, this.normalizationPolicy),
     )))
     const refs: ImageAttachmentRef[] = []
-    for (const image of prepared) refs.push(await commitPreparedImageFile(this.root, image))
+    for (const image of prepared) refs.push(await this.commit(image))
     return refs
   }
 
@@ -211,15 +232,37 @@ export class LocalAttachmentStore extends AttachmentStore {
     const prepared = await this.compression.run(
       () => prepareImageFile(input, this.imageLimits, this.normalizationPolicy),
     )
-    return commitPreparedImageFile(this.root, prepared)
+    return this.commit(prepared)
   }
 
   async readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment> {
-    return readImageFile(this.root, ref, signal)
+    this.imageHostPath(ref)
+    return readImageFile(this.storageRoot(), ref, signal)
   }
 
   override imageHostPath(ref: ImageAttachmentRef): string {
-    return normalizedImagePath(this.root, ref)
+    const path = normalizedImagePath(this.storageRoot(), ref)
+    if (ref.temporaryPath !== undefined && (
+      !this.temporary || ref.temporaryPath !== relative(process.cwd(), path).split(sep).join('/')
+    )) {
+      throw new AttachmentError('Temporary attachment reference does not belong to this user and storage root.', 'INVALID_ATTACHMENT_REF')
+    }
+    return path
+  }
+
+  private storageRoot(): string {
+    return this.temporary ? join(this.root, 'users', Buffer.from(currentUserId()).toString('hex')) : this.root
+  }
+
+  private async commit(prepared: PreparedImageFile): Promise<ImageAttachmentRef> {
+    const root = this.storageRoot()
+    const ref = await commitPreparedImageFile(root, prepared)
+    if (!this.temporary) return ref
+    return {
+      ...ref,
+      name: ref.name ?? String(ref.attachmentId).slice('sha256:'.length),
+      temporaryPath: relative(process.cwd(), normalizedImagePath(root, ref)).split(sep).join('/'),
+    }
   }
 
   override async readImageRequest(
@@ -238,7 +281,9 @@ export class LocalAttachmentStore extends AttachmentStore {
   ): Promise<RequestImageAttachment> {
     signal?.throwIfAborted()
     const variantId = requestImageVariantId(ref, policy)
-    const key = String(variantId)
+    const root = this.storageRoot()
+    this.imageHostPath(ref)
+    const key = `${root}:${variantId}`
     let operation = this.requestInflight.get(key)
     if (operation?.controller.signal.aborted) {
       this.requestInflight.delete(key)
@@ -247,7 +292,7 @@ export class LocalAttachmentStore extends AttachmentStore {
     if (operation === undefined) {
       const shared = new SharedRequest<RequestImageAttachment>(sharedSignal => this.compression.run(async () => {
         const request = await readRequestImageFile(
-          this.root,
+          root,
           stored ?? await this.readImage(ref, sharedSignal),
           policy,
           sharedSignal,

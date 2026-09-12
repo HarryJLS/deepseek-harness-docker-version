@@ -43,7 +43,7 @@ MySQL 存储、会话与附件提供方共用的辅助库。此库不创建连�
 <details>
 <summary>实现细节</summary>
 
-进程内按工作节点共享雪花生成器，并在时钟回退和序列耗尽时保持逻辑时间单调。JSON 序列化将字符串值中的 NUL 替换为 U+FFFD，不改写字面的转义文本。连接默认值与表检查位于 [src/index.ts](src/index.ts)，审计定义和 ID 生成位于 [src/audit.ts](src/audit.ts)。
+进程内按工作节点共享雪花生成器，并在时钟回退和序列耗尽时保持逻辑时间单调。JSON 序列化通过标准 JSON 转义保留字符串值与键，包括 NUL。连接默认值与表检查位于 [src/index.ts](src/index.ts)，审计定义和 ID 生成位于 [src/audit.ts](src/audit.ts)。
 
 </details>
 

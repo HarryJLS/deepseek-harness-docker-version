@@ -1,5 +1,5 @@
 ---
-description: "OceanBase/MySQL session persistence with immutable user ownership, audited rows, and transactional event batches."
+description: "OceanBase/MySQL session history with bounded Redis event caching, user isolation, and database recovery."
 kind: "package-reference"
 ---
 
@@ -10,6 +10,8 @@ English | [中文](README.zh.md)
 ## Summary
 
 Stores session headers and events in two database tables through the shared persistence coordinator. A replaced container can recover the same logical history from the same application database.
+
+The optional `redis` configuration enables shared, expiring context reads. Container deployments require this configuration from Nacos; [Redis configuration and key layout](../../../deploy/README.md#redis-cache) have one operational reference.
 
 ## Table of Contents
 
@@ -31,6 +33,8 @@ The indexed `user_id` must match SessionHeader ownership, with `-` for absent in
 
 The [shared schema helpers](../../util/mysql-schema/README.md) define audit fields, replica worker numbers, and startup checks. Existing incompatible tables are rejected without altering data. Soft-deleted session and event rows are excluded from reads.
 
+MySQL commits each batch before Redis receives it. Cache misses, incomplete chunks, checksum failures, and runtime Redis failures read the affected page from MySQL without truncating history. Startup fails when a configured Redis server cannot connect. Every read still validates the database header and log extent; Redis does not grant access or make a database outage transparent.
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -40,6 +44,8 @@ The [shared schema helpers](../../util/mysql-schema/README.md) define audit fiel
 <summary>Implementation internals</summary>
 
 The coordinator owns buffering, preparation reuse, live adoption, repair sequencing, and shutdown quiescence. Header materialization and the first event batch commit together; a repair appends its closers in one transaction. Row-per-event transactions cannot produce a torn JSONL tail. Revision tokens include the database and application names. Recovery reads 1,000 events per keyset page, then returns the complete logical log.
+
+Redis stores separate immutable event values, splitting oversized values into checksummed byte chunks. Every key has a sliding TTL, and physical database row identity separates recreated sessions from old cache entries. A SQL row lock and contiguous sequence check reject competing write batches. Existing live Agents still need one execution owner.
 
 </details>
 
@@ -72,7 +78,7 @@ Unchanged logical history reconstructs the same request prefix.
 
 - There is no raw per-session artifact: locate returns nothing and supportsRawArtifacts is false.
 - Paging bounds individual database results, not the complete in-memory history.
-- Retention and distributed Agent execution are not implemented by this provider.
+- Redis expiration does not delete database history. Distributed Agent execution and routing are not implemented by this provider; route a live session to its owning process.
 
 <a id="dev-note"></a>
 ### Dev Note

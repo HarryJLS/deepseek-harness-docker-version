@@ -2,9 +2,9 @@
 
 [English](attachment.md) | 中文
 
-附件 seam 将二进制图片的所有权与会话日志分离。生产方把经过校验的编码字节交给 [`ctx.attachments`](#ctxattachments--attachmentstore-abstract-seam)；只有对象完成持久化后，该服务才会发布不可变的内容寻址引用。会话事件和模型可见的 `ImageBlock` 包含该引用及其元数据，绝不包含浏览器对象 URL、宿主临时路径、提供方 URL 或 base64 数据。
+附件 seam 将二进制图片的所有权与会话日志分离。生产方把经过校验的编码字节交给 [`ctx.attachments`](#ctxattachments--attachmentstore-abstract-seam)；该服务写入规范化对象后发布内容寻址引用。会话事件和模型可见的 `ImageBlock` 包含引用与元数据，不包含浏览器对象 URL、提供方 URL 或 base64 数据。默认使用持久化存储；[临时本地存储](../../packages/attachment/attachment-local/README.zh.md#temporary-storage) 显式允许文件丢失，并记录相对路径。
 
-未发送的浏览器草稿可以保留在内存中，原生客户端也可以将其暂存于操作系统临时存储。宿主接受用户消息后，会先把消息中的图片移到 `<DSH_HOME>/attachments/v1` 下，再追加用户事件。结构化模型图片输出遵循同样的先持久化、后追加事件规则。
+未发送的浏览器草稿可以保留在内存中，原生客户端也可以将其暂存于操作系统临时存储。默认部署在宿主接受用户消息时，先把图片写到 `<DSH_HOME>/attachments/v1` 下，再追加用户事件。结构化模型图片输出遵循同样的先发布文件、后追加事件规则。
 
 来源：[`packages/attachment/attachment/src/types.ts`](../../packages/attachment/attachment/src/types.ts)
 
@@ -18,7 +18,7 @@ type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
 ```
 
 ```ts type-equiv
-/** Durable, serializable reference to one immutable normalized image. */
+/** Serializable reference to one immutable normalized image; temporaryPath opts out of byte retention. */
 interface ImageAttachmentRef {
   /** Opaque storage identifier; never a filesystem path or bearer URL. */
   attachmentId: AttachmentId
@@ -32,6 +32,8 @@ interface ImageAttachmentRef {
   height: number
   /** Optional display name stripped of local path information. */
   name?: string
+  /** Process-relative file reference for explicitly temporary storage; bytes may disappear between turns. */
+  temporaryPath?: string
   /**
    * Input dimensions after applying EXIF orientation and before normalization
    * scaling. Present only when normalization reduced the image.
@@ -139,7 +141,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.attachments` — `AttachmentStore` (abstract seam)
 
-Immutable binary attachment service. Implementations validate bytes before publishing a reference.
+Immutable binary attachment service. Temporary deployments explicitly identify non-durable file references.
 
 ```ts cordis-catalog
 /**
@@ -151,19 +153,20 @@ Immutable binary attachment service. Implementations validate bytes before publi
 abstract validateImage(input: SaveImageAttachment): Promise<void>
 
 /**
- * Validate and durably commit one ordered image batch.
+ * Validate and publish one ordered image batch before its owning events.
  * @param inputs - encoded images in owning-message order.
- * @returns durable normalized attachment references in the same order after every member succeeds.
+ * @returns normalized references in input order; explicitly temporary providers do not promise byte retention.
  */
 async saveImages(inputs: readonly SaveImageAttachment[]): Promise<readonly ImageAttachmentRef[]>
 
 /**
- * Validate and durably commit one image before its owning session event is appended.
- * The returned reference describes the persisted normalized image. When
+ * Validate and publish one image before its owning session event is appended.
+ * The returned reference describes the normalized image. Storage is durable
+ * unless the deployment explicitly selects temporary files. When
  * normalization reduces the raster, its `originalDimensions` records the
  * orientation-applied input dimensions.
  * @param input - encoded bytes, declared media type, and optional display name.
- * @returns the durable content-addressed normalized image reference.
+ * @returns the content-addressed reference, with a relative path when storage is temporary.
  */
 abstract saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef>
 

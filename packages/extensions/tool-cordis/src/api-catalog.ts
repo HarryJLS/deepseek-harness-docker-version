@@ -457,7 +457,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'attachments',
     summary: 'Immutable binary attachment service.',
-    description: 'Immutable binary attachment service. Implementations validate bytes before publishing a reference.',
+    description: 'Immutable binary attachment service. Temporary deployments explicitly identify non-durable file references.',
     methods: [
       {
         signature: 'abstract readonly imageLimits: ImageAttachmentLimits',
@@ -472,15 +472,15 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async saveImages(inputs: readonly SaveImageAttachment[]): Promise<readonly ImageAttachmentRef[]>',
-        description: 'Validate and durably commit one ordered image batch.',
+        description: 'Validate and publish one ordered image batch before its owning events.',
         parameters: [{ name: 'inputs', description: 'encoded images in owning-message order.' }],
-        returns: 'durable normalized attachment references in the same order after every member succeeds.',
+        returns: 'normalized references in input order; explicitly temporary providers do not promise byte retention.',
       },
       {
         signature: 'abstract saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef>',
-        description: 'Validate and durably commit one image before its owning session event is appended. The returned reference describes the persisted normalized image. When normalization reduces the raster, its `originalDimensions` records the orientation-applied input dimensions.',
+        description: 'Validate and publish one image before its owning session event is appended. The returned reference describes the normalized image. Storage is durable unless the deployment explicitly selects temporary files. When normalization reduces the raster, its `originalDimensions` records the orientation-applied input dimensions.',
         parameters: [{ name: 'input', description: 'encoded bytes, declared media type, and optional display name.' }],
-        returns: 'the durable content-addressed normalized image reference.',
+        returns: 'the content-addressed reference, with a relative path when storage is temporary.',
       },
       {
         signature: 'abstract readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment>',
@@ -4088,7 +4088,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ImageAttachmentRef',
-    declaration: 'export interface ImageAttachmentRef {\n    attachmentId: AttachmentId;\n    mediaType: ImageMediaType;\n    bytes: number;\n    width: number;\n    height: number;\n    name?: string;\n    originalDimensions?: {\n        width: number;\n        height: number;\n    };\n}',
+    declaration: 'export interface ImageAttachmentRef {\n    attachmentId: AttachmentId;\n    mediaType: ImageMediaType;\n    bytes: number;\n    width: number;\n    height: number;\n    name?: string;\n    temporaryPath?: string;\n    originalDimensions?: {\n        width: number;\n        height: number;\n    };\n}',
   },
   {
     name: 'ImageBlock',

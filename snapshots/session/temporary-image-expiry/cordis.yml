@@ -1,0 +1,7 @@
+- id: attachment-local
+  config:
+    temporaryRoot: .dsh/temporary-attachments
+
+- insert:
+    - id: expire-temporary-image
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/expire-temporary-image.ts'

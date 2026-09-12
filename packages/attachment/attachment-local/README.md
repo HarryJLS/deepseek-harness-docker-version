@@ -38,6 +38,7 @@ Mount the plugin with no required configuration. The defaults below define what 
 | Field | Default | Meaning |
 |---|---|---|
 | `dshHome` | resolved | Explicit harness home; omitted follows `$DSH_HOME`, then `~/.dsh` |
+| `temporaryRoot` | absent | Opt into user-scoped, non-durable files under a process-relative subdirectory |
 | `maxImageBytes` | `20 MiB` | Maximum encoded source bytes accepted for one image |
 | `maxImagesPerMessage` | `20` | Maximum image count accepted in one submitted message |
 | `maxMessageImageBytes` | `200 MiB` | Maximum aggregate encoded source bytes in one submitted message |
@@ -50,9 +51,14 @@ Mount the plugin with no required configuration. The defaults below define what 
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-attachment-local) is the exhaustive source for every accepted field and its JSDoc.
 
+<a id="temporary-storage"></a>
 ### Where your images are stored and how long they last
 
 Attached images are kept below `<DSH_HOME>/attachments/v1` on this machine. Stored images are never deleted automatically, identical images are stored only once, and a later tightening of the limits never makes already-saved images unreadable. If your images must be readable from another machine, this package is not the right fit.
+
+Setting `temporaryRoot` explicitly selects temporary storage instead. References retain a relative path, filename, and verified image metadata, never encoded file bytes. Files are separated by platform user beneath that directory; paths cannot escape it or authorize another user's file. The [container deployment](../../../deploy/README.md#temporary-files) uses this mode and does not store attachments in Redis or MySQL.
+
+Temporary files may be removed by the operator or container lifecycle. Before an Agent step, missing images in incoming messages and existing model history become path-only text; replacements of existing history are appended to the log, so resume reconstructs the same omission. Existing files still support image requests. Corrupt files and permission failures remain errors, and cleanup racing an already-started request can still fail that request.
 
 ### What happens when you attach an image
 
@@ -132,6 +138,7 @@ These limits describe what this storage can and cannot do; they are current pack
 
 - **Images are kept forever** — stored images are never deleted automatically, and nothing collects unreferenced objects.
 - **Local to this machine** — images live on the machine that runs the harness; other hosts cannot read them.
+- **Temporary storage is opt-in** — its files have no retention promise or automatic backup; cross-node image access needs an operator-provided shared temporary directory or reattachment.
 - **Animated GIF becomes static** — normalization retains only the first frame; animation is outside the version-one image contract.
 - **Encoder output is versioned** — the installed Sharp/libvips build pins normalization and request bytes; an encoder or transform-version upgrade re-addresses future variants while existing objects remain valid.
 

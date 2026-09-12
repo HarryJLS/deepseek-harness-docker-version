@@ -43,7 +43,7 @@ Providers probe existing tables before issuing DDL. Existing tables must pass au
 <details>
 <summary>Implementation internals</summary>
 
-The Snowflake generator is shared per worker within the process and retains monotonic logical time across clock rollback and sequence exhaustion. JSON serialization replaces NUL characters in string values with U+FFFD without rewriting literal escape text. Connection defaults and schema checks live in [src/index.ts](src/index.ts); audit definitions and ID generation live in [src/audit.ts](src/audit.ts).
+The Snowflake generator is shared per worker within the process and retains monotonic logical time across clock rollback and sequence exhaustion. JSON serialization preserves string values and keys, including NUL, through ordinary JSON escaping. Connection defaults and schema checks live in [src/index.ts](src/index.ts); audit definitions and ID generation live in [src/audit.ts](src/audit.ts).
 
 </details>
 

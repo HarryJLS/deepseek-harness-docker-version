@@ -2,9 +2,9 @@
 
 English | [中文](attachment.zh.md)
 
-The attachment seam separates binary image ownership from the session log. A producer gives validated encoded bytes to [`ctx.attachments`](#ctxattachments--attachmentstore-abstract-seam); the service publishes an immutable content-addressed reference only after the object is durable. Session events and model-visible `ImageBlock`s contain that reference and metadata, never a browser object URL, host temporary path, provider URL, or base64 payload.
+The attachment seam separates binary image ownership from the session log. A producer gives validated encoded bytes to [`ctx.attachments`](#ctxattachments--attachmentstore-abstract-seam); the service publishes a content-addressed reference after writing the normalized object. Session events and model-visible `ImageBlock`s contain references and metadata, never browser object URLs, provider URLs, or base64 payloads. Durable storage is the default; [temporary local storage](../../packages/attachment/attachment-local/README.md#temporary-storage) explicitly permits file loss and records relative paths.
 
-Unsent browser drafts may stay in memory and native clients may stage them in operating-system temporary storage. Once the host accepts a user message, its images move below `<DSH_HOME>/attachments/v1` before the user event is appended. Structured model image output follows the same persist-before-event rule.
+Unsent browser drafts may stay in memory and native clients may stage them in operating-system temporary storage. In the default deployment, the host writes accepted images below `<DSH_HOME>/attachments/v1` before appending the user event. Structured model image output follows the same file-publication-before-event rule.
 
 Source: [`packages/attachment/attachment/src/types.ts`](../../packages/attachment/attachment/src/types.ts)
 
@@ -18,7 +18,7 @@ type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
 ```
 
 ```ts type-equiv
-/** Durable, serializable reference to one immutable normalized image. */
+/** Serializable reference to one immutable normalized image; temporaryPath opts out of byte retention. */
 interface ImageAttachmentRef {
   /** Opaque storage identifier; never a filesystem path or bearer URL. */
   attachmentId: AttachmentId
@@ -32,6 +32,8 @@ interface ImageAttachmentRef {
   height: number
   /** Optional display name stripped of local path information. */
   name?: string
+  /** Process-relative file reference for explicitly temporary storage; bytes may disappear between turns. */
+  temporaryPath?: string
   /**
    * Input dimensions after applying EXIF orientation and before normalization
    * scaling. Present only when normalization reduced the image.
@@ -139,7 +141,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.attachments` — `AttachmentStore` (abstract seam)
 
-Immutable binary attachment service. Implementations validate bytes before publishing a reference.
+Immutable binary attachment service. Temporary deployments explicitly identify non-durable file references.
 
 ```ts cordis-catalog
 /**
@@ -151,19 +153,20 @@ Immutable binary attachment service. Implementations validate bytes before publi
 abstract validateImage(input: SaveImageAttachment): Promise<void>
 
 /**
- * Validate and durably commit one ordered image batch.
+ * Validate and publish one ordered image batch before its owning events.
  * @param inputs - encoded images in owning-message order.
- * @returns durable normalized attachment references in the same order after every member succeeds.
+ * @returns normalized references in input order; explicitly temporary providers do not promise byte retention.
  */
 async saveImages(inputs: readonly SaveImageAttachment[]): Promise<readonly ImageAttachmentRef[]>
 
 /**
- * Validate and durably commit one image before its owning session event is appended.
- * The returned reference describes the persisted normalized image. When
+ * Validate and publish one image before its owning session event is appended.
+ * The returned reference describes the normalized image. Storage is durable
+ * unless the deployment explicitly selects temporary files. When
  * normalization reduces the raster, its `originalDimensions` records the
  * orientation-applied input dimensions.
  * @param input - encoded bytes, declared media type, and optional display name.
- * @returns the durable content-addressed normalized image reference.
+ * @returns the content-addressed reference, with a relative path when storage is temporary.
  */
 abstract saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef>
 

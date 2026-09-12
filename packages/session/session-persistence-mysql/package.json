@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "workspace:^",
+    "ioredis": "^5.7.0",
     "mysql2": "^3.11.5",
     "@deepseek-ai/dsh-user-context": "workspace:^"
   },
