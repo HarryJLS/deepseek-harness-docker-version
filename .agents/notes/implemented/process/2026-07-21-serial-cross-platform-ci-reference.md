@@ -4,6 +4,8 @@ Status: implemented
 
 English | [中文](2026-07-21-serial-cross-platform-ci-reference.zh.md)
 
+The [Docker CI decision](2026-09-13-docker-ci-scope.md) supersedes the automatic self-hosted and macOS trigger policy below for the downstream Docker repository. This note retains the upstream reference rationale, independent completeness checks, and platform-specific verification requirements.
+
 ## Problem
 
 The pull-request workflow consolidates required checks into dedicated Linux and Windows jobs. Those jobs still should not be the only completeness oracle: a defect in their gate inventory or dependency graph could omit work while the required aggregate stays green.

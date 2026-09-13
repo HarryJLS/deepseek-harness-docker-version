@@ -4,6 +4,8 @@ Status: implemented
 
 English | [中文](2026-06-19-real-api-e2e-ci.zh.md)
 
+The [Docker CI decision](../process/2026-09-13-docker-ci-scope.md) supersedes this note's automatic-trigger policy for the downstream Docker repository. The upstream trigger rationale below remains relevant to installations with funded API coverage; step-scoped secrets, missing-key refusal, and the prohibition on untrusted secret-bearing runs remain applicable.
+
 ## Problem
 
 The harness leans hard on real-API tests by policy: [docs/testing.md](../../../../docs/testing.md) argues that a no-key suite proves the plumbing but not the product, and the [ACP inject postmortem](../../../../docs/postmortem/0001-acp-default-export-drops-inject.md) is the standing proof — 178 keyless tests stayed green while a real ACP client session crashed instantly. The real-API e2e suite (`pnpm run test:e2e`, the `*.e2e.ts` files) exists precisely to close that gap: it drives the agent against the live DeepSeek API — real model calls, real bash tools, multi-turn, resume, ACP-over-stdio.

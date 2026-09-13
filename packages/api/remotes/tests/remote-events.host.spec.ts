@@ -6,6 +6,8 @@ import type {
   TypertRemoteEventSource,
 } from '@deepseek-ai/dsh-api-gateway'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
+import { SessionStore } from '@deepseek-ai/dsh-session'
+import { DEFAULT_USER_ID, parseUserId, withUser } from '@deepseek-ai/dsh-user-context'
 import { describe, expect, it } from 'vitest'
 import { apply, inject } from '../src/index.ts'
 
@@ -25,6 +27,7 @@ async function setup(): Promise<{
   readonly fiber: Fiber
 }> {
   const ctx = new Context()
+  await ctx.plugin(SessionStore)
   const gateway: GatewayProbe = {
     source: undefined,
     host: undefined,
@@ -149,24 +152,25 @@ describe('Remote event Host source', () => {
     await ctx.fiber.dispose()
   })
 
-  it('bridges scoped waterfall result, next delegation, and rejection', async () => {
+  it.each([undefined, parseUserId('session-owner')])('bridges scoped waterfall result, next delegation, and rejection for owner %s', async (userId) => {
     const { ctx, gateway } = await setup()
     const abort = new AbortController()
     const iterator = sourceOf(gateway)(abort.signal)[Symbol.asyncIterator]()
     const agentCtx = ctx.extend()
-    const agent = { ctx: agentCtx }
+    const agent = { ctx: agentCtx, session: ctx.sessions.create(undefined, { meta: userId === undefined ? {} : { userId } }) }
     const target = scopeTarget(ctx, agent)
     const request = { questions: [], agent }
 
-    const claimed = waterfallRaw(
+    const claimed = withUser(parseUserId('request-user'), () => waterfallRaw(
       ctx,
       target,
       'user-questions/request',
       [request],
       () => Promise.resolve('host fallback'),
-    )
+    ))
     const claimedDispatch = invocationOf((await iterator.next()).value)
     expect(claimedDispatch).toMatchObject({
+      userId: userId ?? DEFAULT_USER_ID,
       event: 'user-questions/request',
       request,
       context: { value: agentCtx, subject: agent },
@@ -211,7 +215,7 @@ describe('Remote event Host source', () => {
     const abort = new AbortController()
     const iterator = sourceOf(gateway)(abort.signal)[Symbol.asyncIterator]()
     const delivery = iterator.next()
-    const agent = { ctx: ctx.extend() }
+    const agent = { ctx: ctx.extend(), session: ctx.sessions.create() }
     const reason = new Error('forwarded event source removed')
     const pending = waterfallRaw(
       ctx,

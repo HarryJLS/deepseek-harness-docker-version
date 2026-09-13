@@ -124,7 +124,9 @@ vendor manifest 守卫检查 `vendor/*/src` 下的改动是否连同对应的 `v
 
 ### CI 门禁
 
-keyless [CI 工作流](../.github/workflows/ci.yml) 将独立门禁分组到若干宽粒度 lane，并在受支持的 Node 版本上运行一组较小的兼容性检查。产物消费方在各自 lane 内等待一次 build。单独的真实 API 工作流按其配置的 worker 上限运行 `pnpm run test:e2e`。当前门禁和 job 清单以 [scripts/run-gates.ts](../scripts/run-gates.ts) 和工作流文件为准。
+keyless [CI 工作流](../.github/workflows/ci.yml) 将独立门禁分组到若干宽粒度 lane，并在受支持的 Node 版本上运行一组较小的兼容性检查。产物消费方在各自 lane 内等待一次 build。当前门禁和 job 清单以 [scripts/run-gates.ts](../scripts/run-gates.ts) 和工作流文件为准。
+
+在这个 Docker 仓库中，[Sandbox](../.github/workflows/sandbox.yml) 会在 master 推送时运行 Linux 单元测试、部署配置测试及 Linux 内核检查；macOS 检查需要手动触发。[真实 API E2E](../.github/workflows/e2e.yml) 和 [CI master](../.github/workflows/ci-master.yml) 仅支持手动运行。真实 API 测试需要仓库密钥 `DEEPSEEK_API_KEY_EXTERNAL`；自托管参考套件需要对应名称的运行器池。这些可选工作流不能设为分支保护的必需检查。详见 [Docker CI 决策](../.agents/notes/implemented/process/2026-09-13-docker-ci-scope.zh.md)。
 
 ### 日常命令
 

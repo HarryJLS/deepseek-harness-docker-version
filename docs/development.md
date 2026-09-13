@@ -120,7 +120,9 @@ Contributors can opt into the comprehensive local gate set with `pnpm run check:
 
 ### CI gates
 
-The keyless [CI workflow](../.github/workflows/ci.yml) groups independent gates into broad lanes and runs a smaller compatibility signal across supported Node versions. Artifact consumers wait for one build within their lane. The separate real-API workflow runs `pnpm run test:e2e` with its configured worker bound. See [scripts/run-gates.ts](../scripts/run-gates.ts) and the workflow files for the current gate and job inventory.
+The keyless [CI workflow](../.github/workflows/ci.yml) groups independent gates into broad lanes and runs a smaller compatibility signal across supported Node versions. Artifact consumers wait for one build within their lane. See [scripts/run-gates.ts](../scripts/run-gates.ts) and the workflow files for the current gate and job inventory.
+
+For this Docker repository, [Sandbox](../.github/workflows/sandbox.yml) runs Linux unit tests, deployment configuration tests, and Linux kernel checks on master pushes; its macOS checks require manual dispatch. [Real-API E2E](../.github/workflows/e2e.yml) and [CI master](../.github/workflows/ci-master.yml) are manual-only. Real-API runs require the repository secret `DEEPSEEK_API_KEY_EXTERNAL`; self-hosted reference suites require their named runner pools. These optional workflows must not be required branch-protection checks. See the [Docker CI decision](../.agents/notes/implemented/process/2026-09-13-docker-ci-scope.md).
 
 ### Daily commands
 

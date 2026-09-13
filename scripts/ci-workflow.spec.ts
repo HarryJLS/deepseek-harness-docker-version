@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as yaml from 'js-yaml'
@@ -55,7 +56,7 @@ describe('CI workflow', () => {
     }
   })
 
-  it('keeps required Wine and split native Windows jobs with failover, plus a master-only standby', () => {
+  it('keeps required Wine and split native Windows jobs with failover, plus a manual standby', () => {
     const workflow = loadWorkflow('.github/workflows/ci.yml')
     const masterWorkflow = loadWorkflow('.github/workflows/ci-master.yml')
     if (!isRecord(workflow.jobs)
@@ -142,12 +143,10 @@ describe('CI workflow', () => {
     expect(windowsObservational.name).toBe('windows node 24 / observational')
     expect(windowsObservational['continue-on-error']).toBe(true)
 
-    // wine-apt-cache: master-only, seeds the Wine apt cache, lives in ci-master.
-    expect(wineAptCache.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master'")
+    expect(wineAptCache.if).toBe("github.event_name == 'workflow_dispatch' && inputs.suite == 'wine-apt-cache'")
     expect(wineAptCache['runs-on']).toBe('ubuntu-latest')
 
-    // serial-windows: master-only standby, self-hosted, non-blocking, lives in ci-master.
-    expect(serialWindows.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master'")
+    expect(serialWindows.if).toBe("github.event_name == 'workflow_dispatch' && inputs.suite == 'self-hosted-standby'")
     expect(serialWindows['runs-on']).toEqual(['self-hosted', 'dsh-win-ci', 'windows'])
     expect(serialWindows.name).toBe('serial / windows (self-hosted standby)')
 
@@ -183,7 +182,7 @@ describe('CI workflow', () => {
     )
   })
 
-  it('exempts push from cancellation in ci-master, so one master merge does not cancel the running drill', () => {
+  it('runs reference suites only after an explicit manual selection', () => {
     const workflow = loadWorkflow('.github/workflows/ci-master.yml')
     const prWorkflow = loadWorkflow('.github/workflows/ci.yml')
     if (!isRecord(workflow.jobs) || !isRecord(workflow.concurrency)) {
@@ -193,65 +192,37 @@ describe('CI workflow', () => {
       throw new TypeError('ci workflow must define jobs')
     }
 
-    // Cancellation applies to the whole superseded RUN, so this has to be
-    // decided at workflow level and gated on the event: a job-level group
-    // cannot exempt its job from its run being cancelled. Only push is exempt —
-    // a drill takes longer than the interval between master merges. The negated
-    // form is load-bearing: `== 'pull_request'` would also stop cancelling
-    // workflow_dispatch, and a re-dispatched runner benchmark holds up to 12
-    // larger runners for 15 minutes in this same group on master.
-    expect(workflow.concurrency['cancel-in-progress']).toBe("${{ github.event_name != 'push' }}")
-
-    // The PR-only ci.yml still cancels a superseded run on a new push, so a
-    // fresh head does not stack a second full 9-job run behind a stale one.
-    // Unlike ci-master it has no push carve-out: every PR event supersedes.
+    expect(workflow.concurrency['cancel-in-progress']).toBe(true)
     expect(prWorkflow.concurrency).toMatchObject({
       'cancel-in-progress': true,
     })
 
-    // The exact event sets are what keep master-only jobs out of the PR check
-    // panel: ci-master triggers only on push(master) + workflow_dispatch and
-    // never on pull_request; ci.yml is exactly pull_request-only. Assert the
-    // full sets so losing the wrong event, or gaining an extra one, fails.
     if (!isRecord(workflow.on) || !isRecord(prWorkflow.on)) {
       throw new TypeError('both CI workflows must define on')
     }
-    expect(Object.keys(workflow.on).sort()).toEqual(['push', 'workflow_dispatch'])
+    expect(Object.keys(workflow.on)).toEqual(['workflow_dispatch'])
     expect(Object.keys(prWorkflow.on)).toEqual(['pull_request'])
+    expect(workflowEvent(workflow, 'workflow_dispatch')).toMatchObject({
+      inputs: {
+        suite: {
+          default: 'wine-apt-cache',
+          options: ['wine-apt-cache', 'self-hosted-standby', 'larger-runner-benchmark', 'consolidated-runner-benchmark'],
+        },
+      },
+    })
 
-    // Neither drill may carry a job-level group: it would not exempt the job
-    // from run-scoped cancellation.
-    for (const name of ['serial-linux-selfhosted', 'serial-windows']) {
-      const job = workflow.jobs[name]
-      if (!isRecord(job)) throw new TypeError(`${name} must be defined`)
-      expect(job.concurrency).toBeUndefined()
-      // Both stay master-push-only; that is what makes the push carve-out safe.
-      expect(job.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master'")
-    }
+    expect(Object.fromEntries(Object.entries(workflow.jobs).map(([name, job]) => [
+      name,
+      isRecord(job) ? job.if : undefined,
+    ]))).toEqual({
+      'wine-apt-cache': "github.event_name == 'workflow_dispatch' && inputs.suite == 'wine-apt-cache'",
+      'serial-linux-selfhosted': "github.event_name == 'workflow_dispatch' && inputs.suite == 'self-hosted-standby'",
+      'serial-macos': false,
+      'serial-windows': "github.event_name == 'workflow_dispatch' && inputs.suite == 'self-hosted-standby'",
+      'larger-runner-benchmark': "github.event_name == 'workflow_dispatch' && inputs.suite == 'larger-runner-benchmark'",
+      'consolidated-runner-benchmark': "github.event_name == 'workflow_dispatch' && inputs.suite == 'consolidated-runner-benchmark'",
+    })
 
-    // What bounds the cost of exempting push: a master push may only carry the
-    // cache seeder and the two drills. Any job reachable on push would start
-    // accumulating uncancelled runs, so the set is pinned here.
-    const NOT_PUSH_REACHABLE = new Set([
-      "github.event_name == 'workflow_dispatch' && inputs.suite == 'larger-runner-benchmark'",
-      "github.event_name == 'workflow_dispatch' && inputs.suite == 'consolidated-runner-benchmark'",
-    ])
-    const pushReachable = Object.entries(workflow.jobs)
-      .filter(([, job]) => {
-        if (!isRecord(job)) return false
-        if (job.if === undefined) return true // unconditional: runs on every event
-        if (job.if === false) return false // `if: false` parses as a boolean
-        if (typeof job.if !== 'string') return true // unrecognized shape: surface it
-        return !NOT_PUSH_REACHABLE.has(job.if.trim())
-      })
-      .map(([name]) => name)
-      .sort()
-    expect(pushReachable).toEqual(['serial-linux-selfhosted', 'serial-windows', 'wine-apt-cache'])
-
-    // Why workflow_dispatch must keep cancelling: each benchmark fans out to a
-    // dozen larger runners at once, in this same group on master. If it stopped
-    // cancelling, a re-dispatch would queue ahead of a drill instead of
-    // replacing the stale measurement.
     for (const name of ['larger-runner-benchmark', 'consolidated-runner-benchmark']) {
       const job = workflow.jobs[name]
       if (!isRecord(job) || !isRecord(job.strategy)) {
@@ -302,6 +273,43 @@ describe('CI workflow', () => {
 })
 
 describe('DeepSeek e2e workflow', () => {
+  it('is manual-only and keeps credentials out of repository setup', () => {
+    const workflow = loadWorkflow('.github/workflows/e2e.yml')
+    const e2e = workflowJob(workflow, 'e2e')
+    if (!Array.isArray(e2e.steps)) throw new TypeError('DeepSeek e2e workflow must define steps')
+
+    expect(workflow.on).toEqual({ workflow_dispatch: null })
+    const steps = e2e.steps.filter(isRecord)
+    expect(steps[0]).toMatchObject({
+      name: 'Preflight (require DEEPSEEK_API_KEY)',
+      env: { DEEPSEEK_API_KEY: '${{ secrets.DEEPSEEK_API_KEY_EXTERNAL }}' },
+    })
+    expect(steps.filter(step => isRecord(step.env) && 'DEEPSEEK_API_KEY' in step.env)
+      .map(step => step.name)).toEqual([
+      'Preflight (require DEEPSEEK_API_KEY)',
+      'E2E tests (real DeepSeek API)',
+    ])
+    expect(JSON.stringify(workflow.env)).not.toContain('DEEPSEEK_API_KEY')
+    expect(e2e.env).toBeUndefined()
+  })
+
+  it.skipIf(process.platform === 'win32').each([
+    { key: '', status: 1 },
+    { key: 'fixture-api-key', status: 0 },
+  ])('preflight exits $status for key "$key" without exposing it', ({ key, status }) => {
+    const e2e = workflowJob(loadWorkflow('.github/workflows/e2e.yml'), 'e2e')
+    if (!Array.isArray(e2e.steps) || !isRecord(e2e.steps[0]) || typeof e2e.steps[0].run !== 'string') {
+      throw new TypeError('DeepSeek e2e workflow must start with a preflight command')
+    }
+    const result = spawnSync('bash', ['-c', e2e.steps[0].run], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, DEEPSEEK_API_KEY: key },
+    })
+    expect(result.status).toBe(status)
+    if (key === '') expect(result.stdout).toContain('DEEPSEEK_API_KEY_EXTERNAL')
+    else expect(result.stdout).not.toContain(key)
+  })
+
   it('prepares bubblewrap from the pinned payload without a package transaction', () => {
     const workflow = loadWorkflow('.github/workflows/e2e.yml')
     const e2e = workflowJob(workflow, 'e2e')
@@ -321,6 +329,39 @@ describe('DeepSeek e2e workflow', () => {
 
     const step = e2e.steps.filter(isRecord).find(candidate => candidate.name === 'E2E tests (real DeepSeek API)')
     expect(step).toMatchObject({ env: { DSH_E2E_MAX_WORKERS: 4 } })
+  })
+})
+
+describe('Sandbox workflow', () => {
+  it('keeps Linux tests automatic and macOS tests manual', () => {
+    const workflow = loadWorkflow('.github/workflows/sandbox.yml')
+    expect(workflow.on).toEqual({ push: { branches: ['master'] }, workflow_dispatch: null })
+    const linux = workflowJob(workflow, 'sandbox-e2e')
+    const macos = workflowJob(workflow, 'seatbelt')
+    expect(linux.if).toBeUndefined()
+    expect(linux.strategy).toMatchObject({
+      matrix: {
+        include: [
+          { os: 'ubuntu-latest', runner: 'bwrap' },
+          { os: 'ubuntu-24.04', runner: 'landlock' },
+          { os: 'ubuntu-24.04-arm', runner: 'landlock' },
+        ],
+      },
+    })
+    if (!Array.isArray(linux.steps) || !Array.isArray(macos.steps)) {
+      throw new TypeError('Sandbox workflow must define Linux and macOS steps')
+    }
+    expect(linux.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Unit tests (Linux)', if: "matrix.runner == 'bwrap'", run: 'pnpm run test' }),
+      expect.objectContaining({ name: 'Deployment configuration tests', if: "matrix.runner == 'bwrap'", run: 'pnpm run test:deployment' }),
+    ]))
+    expect(macos).toMatchObject({
+      if: "github.event_name == 'workflow_dispatch'",
+      'runs-on': 'macos-latest',
+    })
+    expect(macos.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Unit tests (darwin parity)', run: 'pnpm run test' }),
+    ]))
   })
 })
 
