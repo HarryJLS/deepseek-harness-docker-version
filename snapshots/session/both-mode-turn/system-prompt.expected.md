@@ -325,7 +325,8 @@ interface ToolOutputMap {
     after: string;
   };
   exit_plan_mode: {
-    approved: true;
+    approved: boolean;
+    pending?: true;
   };
   get_goal: {
     goal: null;
