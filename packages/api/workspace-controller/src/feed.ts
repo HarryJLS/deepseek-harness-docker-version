@@ -1,6 +1,7 @@
 /** Reconnect-safe Workspace baseline and increment producer. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { setTimeout as delay } from 'node:timers/promises'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-query'
 import { requestUserId } from '@deepseek-ai/dsh-user-context'
@@ -71,6 +72,7 @@ function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceVie
 
 /** Owns Workspace domain observation and all active follow generations. */
 export class WorkspaceFeed {
+  private readonly lifetime = new AbortController()
   private readonly followers = new Set<WorkspaceFollower>()
   private knownIds: Set<string>
   private order: readonly string[]
@@ -84,6 +86,7 @@ export class WorkspaceFeed {
     this.archived = ctx.workspaceRegistry.archivedSessionIds.map(String)
     ctx.on('domain/changed', (change: DomainChanged) => { this.changed(change) })
     ctx.effect(() => () => {
+      this.lifetime.abort()
       for (const follower of this.followers) follower.close()
       this.followers.clear()
     }, 'workspace-controller.feed')
@@ -106,6 +109,30 @@ export class WorkspaceFeed {
    * @returns baseline followed by ordered Workspace increments.
    */
   async *follow(signal: AbortSignal): AsyncIterable<WorkspaceFollowFrame> {
+    const execution = this.ctx.get('sessionPersistence')?.sharedExecution
+    if (execution !== undefined) {
+      const lifetime = AbortSignal.any([signal, this.lifetime.signal])
+      const cancelled = (): boolean => lifetime.aborted
+      let previous: string | undefined
+      while (!cancelled()) {
+        await this.ctx.workspaceRegistry.refresh()
+        const baseline = this.baseline()
+        const value = {
+          items: await Promise.all(baseline.items.map(async item => ({
+            ...item, sessionIds: await visibleWorkspaceSessions(this.ctx, item.sessionIds),
+          }))),
+          archivedSessionIds: await visibleWorkspaceSessions(this.ctx, baseline.archivedSessionIds),
+        }
+        const encoded = JSON.stringify(value)
+        if (encoded !== previous) {
+          yield { type: 'baseline', value }
+          previous = encoded
+        }
+        try { await delay(execution.pollIntervalMs, undefined, { signal: lifetime }) }
+        catch (error) { if (!cancelled()) throw error }
+      }
+      return
+    }
     signal.throwIfAborted()
     const follower = new WorkspaceFollower()
     this.followers.add(follower)
@@ -137,6 +164,7 @@ export class WorkspaceFeed {
   }
 
   private changed(change: DomainChanged): void {
+    if (this.ctx.get('sessionPersistence')?.sharedExecution !== undefined) return
     if (change.domain !== 'workspace') return
     if (change.table === '') {
       if (change.operation !== 'put') return

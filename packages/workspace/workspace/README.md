@@ -25,6 +25,8 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
+When session persistence enables shared execution, registry mutations use a fresh atomic domain snapshot. Concurrent replicas therefore preserve workspace order and session membership. `refresh()` updates synchronous lookups before an API request uses them; process-local deployments keep their in-memory read behavior. This mode requires a transactional storage backend and a common filesystem mount.
+
 Use this package to give the product a project list: named directories the user works in, the sessions that ran in each, a stable order, and a way to hide sessions without losing them. The API contracts behind each action live in the implementation section.
 
 ### When to use it

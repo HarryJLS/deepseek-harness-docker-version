@@ -6,8 +6,8 @@
  * policy enforce restrictions independently and do not read or write plan
  * state.
  *
- * The state in force is folded from the session log (`plan/mode`, last one
- * wins), so resume and fork restore it without a live mirror. User selections
+ * The state in force is folded from mode events and approved durable reviews,
+ * so resume and fork restore it without a live mirror. User selections
  * remain pending until the next accepted in-turn pre-step. The service includes
  * the selected state in the proposed step assembly, then appends `plan/mode`
  * from `agent/pre-step` only when the step is accepted. Same-step request
@@ -119,8 +119,8 @@ export function resolveConfig(config: PlanModeConfig): PlanModeConfig {
 }
 
 /**
- * Whether plan mode is active after the first `end` events. The last
- * `plan/mode` wins; a prefix with none is inactive.
+ * Whether plan mode is active after the first `end` events. Mode selections
+ * replace it and approved durable reviews exit it; an empty prefix is inactive.
  *
  * @param events The session log or any prefix of it.
  * @param end Fold `events[0, end)`; defaults to the whole log.
@@ -133,6 +133,8 @@ export function foldPlanMode(events: readonly SessionEvent[], end = events.lengt
     if (index >= end) break
     index++
     if (event.type === 'plan/mode') active = event.data.active
+    if (event.type === 'user-questions/state'
+      && event.data.pending === null && event.data.decision?.approvedPlan === true) active = false
   }
   return active
 }
@@ -278,6 +280,10 @@ export class PlanModeController extends Service {
           if (event.type === 'plan/mode') {
             return { ...state, active: event.data.active, wanted: null }
           }
+          if (event.type === 'user-questions/state'
+            && event.data.pending === null && event.data.decision?.approvedPlan === true) {
+            return { active: false, wanted: null, running: null }
+          }
           return state
         },
         wire: {
@@ -287,7 +293,7 @@ export class PlanModeController extends Service {
             return { active: state.active, pending: wanted !== null && wanted !== state.active }
           },
         },
-        stateVersion: 2,
+        stateVersion: 3,
       })
     })
 
@@ -350,10 +356,16 @@ export class PlanModeController extends Service {
           type: 'object',
           additionalProperties: false,
           properties: {
-            approved: { type: 'boolean', const: true, required: true },
+            approved: { type: 'boolean', required: true },
+            pending: { type: 'boolean', const: true },
           },
         },
-        render: () => [{ type: 'text', text: 'Plan approved — plan mode exited; carry out the plan starting with your next step.' }],
+        render: (_args, value) => [{
+          type: 'text',
+          text: value.pending === true
+            ? 'The plan is awaiting the user\'s review. Stop here; do not execute it until the user approves.'
+            : 'Plan approved — plan mode exited; carry out the plan starting with your next step.',
+        }],
       },
       execute: async (args, exec) => {
         const agent = exec.agent
@@ -368,7 +380,7 @@ export class PlanModeController extends Service {
         if (interaction === undefined) {
           throw new Error('no user-questions channel is available to review the plan; ask the user to switch the session mode instead')
         }
-        const answer = await interaction.ask({
+        const answer = await interaction.request({
           questions: [{
             id: REVIEW_ID,
             header: 'Plan review',
@@ -385,7 +397,7 @@ export class PlanModeController extends Service {
           }],
           agent,
           signal: exec.signal,
-        }).catch((cause: unknown) => {
+        }, exec.callId).catch((cause: unknown) => {
           // A dismissed review is not a failed one: the user took the turn back
           // to say something the two options do not cover. Say so, because the
           // generic channel message names ask_user_question, which the model
@@ -397,6 +409,10 @@ export class PlanModeController extends Service {
           }
           throw cause
         })
+        if (answer === undefined) {
+          exec.concludeTurn()
+          return { approved: false, pending: true as const }
+        }
         // A review may outlive this plugin fiber. Without its pre-step listener,
         // an approved selection could never be appended, so fail and keep planning.
         if (disposed) {

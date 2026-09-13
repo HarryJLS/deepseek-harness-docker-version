@@ -129,6 +129,7 @@ export class WorkspaceCommands {
    * @returns the updated Workspace projection.
    */
   async insertSessionBefore(request: WorkspaceInsertSessionBeforeRequest): Promise<WorkspaceValue> {
+    if (this.ctx.get('sessionPersistence')?.sharedExecution !== undefined) await this.ctx.workspaceRegistry.refresh()
     await this.assertSessionUser(request.sessionId)
     if (request.beforeSessionId !== undefined) await this.assertSessionUser(request.beforeSessionId)
     const workspace = this.requireWorkspace(request.workspaceId)
@@ -181,7 +182,10 @@ export class WorkspaceCommands {
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.operationTail.then(operation)
+    const result = this.operationTail.then(async () => {
+      if (this.ctx.get('sessionPersistence')?.sharedExecution !== undefined) await this.ctx.workspaceRegistry.refresh()
+      return operation()
+    })
     this.operationTail = result.then(() => undefined, () => undefined)
     return result
   }

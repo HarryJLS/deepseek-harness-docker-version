@@ -8,6 +8,8 @@ Source: [`packages/workspace/workspace/src/types.ts`](../../packages/workspace/w
 
 ## Identity
 
+With shared session execution enabled, Workspace mutations run on fresh atomic domain snapshots, preserving simultaneous workspace creation and session membership updates across replicas. `WorkspaceRegistry.refresh()` installs committed metadata before synchronous lookups. The API's shared feed polls replacement baselines without attaching a session Agent; all replicas require the same filesystem paths.
+
 ```ts type-equiv
 /**
  * Identifies one workspace record. A generated uuid, never the path: path
@@ -249,6 +251,13 @@ Source: [`packages/api/workspace-controller/src/index.ts`](../../packages/api/wo
 Durable workspace registry. Startup waits for `sessionPersistence`, builds one canonical-cwd header index, and completes the one-time history bootstrap before the service becomes active. The persistence dependency is mandatory so an unavailable peer can never be mistaken for an empty history and commit the initialized marker.
 
 ```ts cordis-catalog
+/**
+ * Refresh shared workspace metadata before a request uses synchronous lookups.
+ * Process-local deployments retain their existing in-memory read behavior.
+ * @returns completion after a consistent database snapshot is installed.
+ */
+async refresh(): Promise<void>
+
 /**
  * Create or reuse a workspace for an existing directory. The path is
  * canonicalized through `fs.realpath`; a nonexistent path rejects with the

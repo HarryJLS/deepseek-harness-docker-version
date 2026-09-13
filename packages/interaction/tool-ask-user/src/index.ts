@@ -60,6 +60,7 @@ export function apply(ctx: Context): void {
         type: 'object',
         additionalProperties: false,
         properties: {
+          pending: { type: 'boolean', const: true },
           answers: {
             type: 'array',
             required: true,
@@ -75,10 +76,15 @@ export function apply(ctx: Context): void {
           },
         },
       },
-      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.pending === true
+          ? 'The questions are awaiting the user\'s answer. Stop here; do not proceed until the user responds.'
+          : JSON.stringify(value),
+      }],
     },
     async execute(args, exec) {
-      const result = await ctx.userQuestions.ask({
+      const result = await ctx.userQuestions.request({
         questions: args.questions.map(question => ({
           id: question.id,
           question: question.question,
@@ -88,7 +94,11 @@ export function apply(ctx: Context): void {
         })),
         ...exec.agent !== undefined ? { agent: exec.agent } : {},
         signal: exec.signal,
-      })
+      }, exec.callId)
+      if (result === undefined) {
+        exec.concludeTurn()
+        return { answers: [], pending: true as const }
+      }
       return {
         answers: result.answers.map(answer => ({
           id: answer.id,

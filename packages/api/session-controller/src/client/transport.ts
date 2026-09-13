@@ -51,6 +51,7 @@ export type SessionJournalChange =
     readonly hasMore: boolean
   }
   | { readonly type: 'append'; readonly entry: SessionLiveEventEntry }
+  | { readonly type: 'state'; readonly running: boolean; readonly projections: SessionProjectionBaseline }
 
 function toSessionJournalChange(
   change: RemoteJournalChange<SessionJournalPage, SessionHistoryRecord>,
@@ -144,7 +145,7 @@ export class SessionEventStream extends RemoteJournalStream<
   constructor(
     private readonly remote: SessionStreamRemote,
     private readonly address: SessionAddress,
-    options: SessionEventStreamOptions,
+    private readonly destinations: SessionEventStreamOptions,
   ) {
     super(remote, {
       name: 'session event stream',
@@ -155,11 +156,11 @@ export class SessionEventStream extends RemoteJournalStream<
       last: historyRecordLastSeq,
       compare: (left, right) => left - right,
       follows: (left, right) => right === left + 1,
-      publish: (change) => { options.publish(toSessionJournalChange(change)) },
-      ...(options.carrierFailed === undefined
+      publish: (change) => { destinations.publish(toSessionJournalChange(change)) },
+      ...(destinations.carrierFailed === undefined
         ? {}
-        : { carrierFailed: options.carrierFailed }),
-      failed: options.failed,
+        : { carrierFailed: destinations.carrierFailed }),
+      failed: destinations.failed,
     })
   }
 
@@ -182,6 +183,10 @@ export class SessionEventStream extends RemoteJournalStream<
             projections: frame.projections,
           },
         }
+        continue
+      }
+      if (frame.type === 'state') {
+        this.destinations.publish(frame)
         continue
       }
       yield { type: 'entry', entry: frame }

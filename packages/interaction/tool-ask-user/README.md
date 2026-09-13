@@ -9,6 +9,8 @@ English | [中文](README.zh.md)
 
 ## Summary
 
+Delivery is selected by `userQuestions`: the default live mode waits for an answerer, while durable mode records the question and ends the turn for a later Session Controller decision. The live exchange described below remains the default outside the Docker deployment.
+
 `dsh-tool-ask-user` gives the model one tool — `ask_user_question` — for asking the human a concise question when it needs confirmation, a choice, or missing information before continuing. The tool pauses until the first scoped answerer accepts the request, then feeds that answer back into the agent loop as an ordinary tool result, so no loop mechanics change. The tool returns the canonical `{ answers: [...] }` shape, rendered as compact JSON text. It renders no UI itself and does not know how input is collected; the Web client contributes its answerer through Remote Events. A runtime-owned child agent cannot ask the user; it must include the unresolved question in its final result.
 
 ## Table of Contents
@@ -121,7 +123,7 @@ Prefix-stable while the definition and visibility are unchanged. Plugin lifecycl
 
 #### What the model sees
 
-The model's full questions remain in the assistant tool-call arguments. After the human answers, the next step sees compact JSON in the exact shape `{"answers":[{"id":"<id>","selected":["<label>"],"custom":"<text>"}]}`; `custom` is omitted when unused and `selected` can contain zero, one, or several labels. UI interaction while the call is pending is not model context.
+Durable delivery returns `{ answers: [], pending: true }` and renders `The questions are awaiting the user's answer. Stop here; do not proceed until the user responds.` A later decision is recorded as a notice in a new turn, not a delayed tool result. The live-answer behavior below applies to the default mode. The model's full questions remain in the assistant tool-call arguments. After the human answers, the next step sees compact JSON in the exact shape `{"answers":[{"id":"<id>","selected":["<label>"],"custom":"<text>"}]}`; `custom` is omitted when unused and `selected` can contain zero, one, or several labels. UI interaction while the call is pending is not model context.
 
 #### Token effect
 

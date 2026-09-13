@@ -25,6 +25,8 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
+`domain.atomic(callback)` refreshes a shared domain under a backend transaction and passes an isolated domain handle to the callback. Use only that handle and await every write. Commit installs the final snapshot into the original stable table handles and emits only final changed values; rollback leaves the original cache and listeners unchanged. A backend without transactions rejects the operation.
+
 Use this package when a host package keeps durable, schema-validated records — workspace records, session sidecar metadata. The owning package declares the domain once; consumers open it and get synchronous reads and durable, change-emitting writes without ever touching a backend.
 
 ### When to use it

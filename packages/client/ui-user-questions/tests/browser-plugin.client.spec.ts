@@ -49,7 +49,10 @@ async function bench(declare = true) {
   const scopeOf = vi.fn((candidate: Context) => (
     candidate as Context & { [SESSION_SCOPE]?: SessionId }
   )[SESSION_SCOPE])
-  ctx.provide('sessions', { scopeOf } as never)
+  ctx.provide('sessions', {
+    scopeOf,
+    list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} },
+  } as never)
   const pending = new Map<PendingQuestion, () => Promise<void>>()
   const registerPendingInteraction = vi.fn((_precedence: (value: PendingQuestion) => number) => (
     value: PendingQuestion,

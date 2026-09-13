@@ -47,6 +47,7 @@
  * - `FAKE_STDERR`: write this line to stderr at boot (diagnostics-tail probe).
  * - `FAKE_STDERR_NO_NEWLINE`: write this to stderr WITHOUT a newline (buffer-flush probe).
  * - `FAKE_RECORD_INIT`: append each `initialize` params JSON to this file (handshake probe).
+ * - `FAKE_SESSION_EVENTS`: JSON event payloads emitted after the prompt receipt.
  */
 
 import { appendFileSync, existsSync, writeFileSync } from 'node:fs'
@@ -266,6 +267,10 @@ reader.on('line', (line) => {
       if (env.FAKE_MALFORMED !== undefined || env.FAKE_MALFORMED_PROMPT !== undefined) {
         respond({})
         return
+      }
+      if (env.FAKE_SESSION_EVENTS !== undefined) {
+        const extra = JSON.parse(env.FAKE_SESSION_EVENTS) as { type: string; data: object }[]
+        for (const item of extra) event(sessionId, item.type, item.data)
       }
       runTurn(sessionId)
       notify('session.status', { sessionId, status: 'idle' })

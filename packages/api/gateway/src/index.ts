@@ -302,6 +302,10 @@ export class TypertGatewayService extends Service implements TypertGateway {
    * @throws {@link TypertGatewayError} for dispatch, provider, or boundary failures; lookup-policy and business errors retain identity.
    */
   async invoke(request: InvokeRemoteRequest): Promise<unknown> {
+    return this.ctx.waterfall('api-gateway/invoke', request, () => this.invokeDirect(request))
+  }
+
+  private async invokeDirect(request: InvokeRemoteRequest): Promise<unknown> {
     const prepared = await this.prepareInvocation(request)
     if (prepared.descriptor.mode === 'stream') {
       throw new TypertGatewayError(

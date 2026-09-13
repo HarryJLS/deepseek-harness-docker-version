@@ -74,6 +74,14 @@ export interface KvUnitDescriptor {
  */
 export interface KvUnit {
   /**
+   * Run a short metadata operation against a freshly locked unit snapshot.
+   * Scoped writes commit together, or all roll back when the callback fails.
+   * @param operation - work using only the supplied transaction-scoped unit.
+   * @returns the callback result after commit; absent on nontransactional backends.
+   */
+  transaction?<T>(operation: (unit: KvUnit) => Promise<T>): Promise<T>
+
+  /**
    * Read the full current snapshot.
    * @returns every table's records keyed by table name, plus the global
    * singleton (`null` when never written or not declared).

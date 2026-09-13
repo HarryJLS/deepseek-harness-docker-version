@@ -10,6 +10,19 @@ const otherId = '66666666-6666-4666-8666-666666666666'
 const proseUuid = '77777777-7777-4777-8777-777777777777'
 
 describe('session snapshot identity redaction', () => {
+  it('preserves a durable question decision and its continuation message identity', () => {
+    const source = [
+      JSON.stringify({ type: 'session', id: parentId }),
+      JSON.stringify({ type: 'user-questions/state', data: { pending: { id: approvalId, version: 4 }, decision: null } }),
+      JSON.stringify({ type: 'user-questions/state', data: { pending: null, decision: { id: approvalId, version: 4, messageId } } }),
+      JSON.stringify({ type: 'user/message', data: { role: 'user', id: messageId, content: [], source: { kind: 'plugin' } } }),
+      '',
+    ].join('\n')
+    const output = redactSessionSnapshotIds([source])
+    expect(output[0]?.match(/\{\{question:1\}\}/g)).toHaveLength(2)
+    expect(output[0]?.match(/\{\{message:1\}\}/g)).toHaveLength(2)
+    expect(redactSessionSnapshotIds(output)).toEqual(output)
+  })
   it('preserves typed relationships across parent and child logs', () => {
     const parent = [
       JSON.stringify({ type: 'session', id: parentId, createdAt: 1, cwd: '/tmp/work' }),

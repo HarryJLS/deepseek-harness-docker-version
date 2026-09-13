@@ -66,6 +66,9 @@ export class SessionControlController {
   }
 
   private baseline(): SessionControlBaseline {
+    if (this.ctx.get('sessionPersistence')?.sharedExecution !== undefined) {
+      return { queues: {}, jobs: {}, projections: {} }
+    }
     const sessions = this.ctx.sessions.list().filter(session => canAccessUser(session.header.userId))
     const queues = Object.create(null) as Record<SessionId, readonly SessionQueuedItem[]>
     const jobs = Object.create(null) as Record<SessionId, readonly SessionJob[]>
@@ -130,6 +133,7 @@ export class SessionControlController {
   }
 
   private broadcast(frame: Exclude<SessionControlFrame, { type: 'baseline' }>): void {
+    if (this.ctx.get('sessionPersistence')?.sharedExecution !== undefined) return
     const session = this.ctx.sessions.get(frame.sessionId)
     if (session === undefined) return
     for (const [stream, userId] of this.streams) {

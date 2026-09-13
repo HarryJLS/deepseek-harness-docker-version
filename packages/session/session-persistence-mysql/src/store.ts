@@ -15,6 +15,7 @@ import {
   type StoredSuffix,
 } from '@deepseek-ai/dsh-session-persistence'
 import type { RedisSessionCache } from './redis-cache.ts'
+import type { MysqlSessionExecution } from './execution.ts'
 
 const SESSION_TABLE = mysqlTable('session')
 const EVENT_TABLE = mysqlTable('session_event')
@@ -50,6 +51,7 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
     database: string,
     snowflakeWorkerId = 0,
     private readonly cache?: RedisSessionCache,
+    private readonly execution?: MysqlSessionExecution,
   ) {
     this.source = `mysql:${database}:${app}`
     this.nextId = mysqlIdGenerator(snowflakeWorkerId)
@@ -142,6 +144,7 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
   /** Materialize a header without changing the owner of an existing identity. */
   async materializeHeader(meta: SessionHeader): Promise<void> {
     await this.transaction(async (conn) => {
+      await this.execution?.assertTransaction(conn, meta.id)
       await this.insertHeader(conn, meta, 1)
       await this.lockOwner(conn, meta)
     })
@@ -150,6 +153,7 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
   async appendBatch(meta: SessionHeader, events: readonly SessionEvent[], isMaterialized: boolean): Promise<void> {
     let rowId = ''
     await this.transaction(async (conn) => {
+      await this.execution?.assertTransaction(conn, meta.id)
       if (!isMaterialized) await this.insertHeader(conn, meta, 0)
       rowId = await this.lockOwner(conn, meta)
       await this.assertNextSeq(conn, meta, events)
@@ -163,6 +167,7 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
     if (closers.length === 0) return
     let rowId = ''
     await this.transaction(async (conn) => {
+      await this.execution?.assertTransaction(conn, meta.id)
       rowId = await this.lockOwner(conn, meta)
       await this.assertNextSeq(conn, meta, closers)
       await this.insertEvents(conn, meta, closers)
@@ -254,6 +259,7 @@ export class MysqlSessionStore implements PersistenceBackend<never> {
 
   async close(): Promise<void> {
     this.cache?.close()
+    await this.execution?.close()
     await this.pool.end()
   }
 

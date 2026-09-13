@@ -58,6 +58,8 @@ kind: "package-reference"
 
 ### 经评审的退出
 
+启用持久化问题时，工具记录审核并以 `{ approved: false, pending: true }` 结束本轮。批准作为新请求到达，记录决定、退出计划模式并启动后续执行；拒绝保持规划，关闭卡片只恢复输入框，不运行模型。两种交付模式使用相同卡片与按钮。
+
 agent 完成计划后，会以 markdown 形式、从标题开头书写计划并调用 `exit_plan_mode`。你评审该计划的原文，选择 `Approve` 离开计划模式，或选择 `Keep planning` 带反馈把 agent 送回去。
 
 选择 `Keep planning`（可附自由文本反馈）会让 agent 回去修订计划；关闭评审改为发言，则告知 agent 等待你的下一条消息。若没有可用的交互评审，`exit_plan_mode` 无法运行，你仍可用 `/plan off` 离开计划模式。
@@ -82,7 +84,7 @@ agent 完成计划后，会以 markdown 形式、从标题开头书写计划并�
 
 ### 持久状态与步骤边界追加
 
-本包持久化一条仅记日志、整值替换的事件 `plan/mode`，最后一条已记录值即为状态。没有轮次开启时，模式变更会立即追加；轮次开启期间，它保持待生效，直到下一个被接受的轮内 pre-step——agent 运行时唯一的追加点——且追加失败不能阻塞轮次。`set`/`get`/`foldPlanMode` 辅助函数及其确切返回状态见 [`src/index.ts`](src/index.ts)。
+本包折叠 `plan/mode` 事件和持久化问题的批准决定。没有轮次开启时，模式变更会立即追加；轮次开启期间，它保持待生效，直到下一个被接受的轮内 pre-step，且追加失败不能阻塞轮次。`set`/`get`/`foldPlanMode` 辅助函数及其确切返回状态见 [`src/index.ts`](src/index.ts)。
 
 ### `/plan` 命令
 
@@ -163,7 +165,7 @@ You are in plan mode. Explore and design before presenting the complete plan thr
 
 #### 模型看到什么
 
-[`exit_plan_mode` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-plan-mode) 在两种状态下均可用；在计划模式之外执行会失败，而计划模式内经批准的评审返回规范的 `{ approved: true }` 值，并渲染既有的确认文本。拒绝仍是携带评审反馈的失败调用，放弃评审则是一次指明用户接手的失败调用。
+持久化交付呈现 `The plan is awaiting the user's review. Stop here; do not execute it until the user approves.`，下一轮以日志通知接收已记录决定。下文的实时交付交互适用于未启用持久化问题时。 [`exit_plan_mode` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-plan-mode) 在两种状态下均可用；在计划模式之外执行会失败，而计划模式内经批准的评审返回规范的 `{ approved: true }` 值，并渲染既有的确认文本。拒绝仍是携带评审反馈的失败调用，放弃评审则是一次指明用户接手的失败调用。
 
 #### Token 影响
 

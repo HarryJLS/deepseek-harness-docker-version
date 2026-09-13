@@ -1402,6 +1402,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'acknowledgement that the Agent accepted the prompt.',
       },
       {
+        signature: '@Remote(\'answerQuestion\') answerQuestion(request: SessionQuestionDecisionRequest): Promise<SessionQuestionDecisionValue>',
+        description: 'Answer a persisted question and admit its continuation on any replica.',
+        parameters: [{ name: 'request', description: 'session, question identity/version, and the user\'s answer.' }],
+        returns: 'acknowledgement after the decision and admitted input are durable.',
+      },
+      {
         signature: '@Remote(\'attachment\') attachment(request: SessionAttachmentRequest): Promise<SessionAttachmentValue>',
         description: 'Read one image proven reachable from the addressed Session log.',
         parameters: [{ name: 'request', description: 'Session and attachment identities used for authorization.' }],
@@ -1414,7 +1420,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'acknowledgement that the queue mutation was applied.',
       },
       {
-        signature: '@Remote(\'cancel\') cancel(request: SessionCancelRequest): SessionCancelValue',
+        signature: '@Remote(\'cancel\') async cancel(request: SessionCancelRequest): Promise<SessionCancelValue>',
         description: 'Cancel one active Agent turn without dropping its pending inbox.',
         parameters: [{ name: 'request', description: 'Session whose active Agent turn is cancelled.' }],
         returns: 'acknowledgement that cancellation was requested.',
@@ -1457,6 +1463,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     summary: 'Durable append-only session storage.',
     description: 'Durable append-only session storage. Implementations preserve contiguous, losslessly JSON-serializable events; append resolves only after durability, and load balances a complete interrupted tail without rewriting committed events.',
     methods: [
+      {
+        signature: 'readonly sharedExecution: SharedSessionExecution | undefined = undefined',
+        description: 'Shared execution support, absent for process-local backends.',
+        parameters: [],
+      },
       {
         signature: 'abstract locate(meta: SessionHeader): SessionLocation | undefined',
         description: 'Resolve this backend\'s independent local artifact for a session without reading, creating, flushing, or otherwise materializing it. Backends such as SQLite that do not own one artifact per session return `undefined`.',
@@ -2636,6 +2647,29 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: '`ctx.userQuestions`: validation plus the scoped answerer waterfall.',
     methods: [
       {
+        signature: 'readonly durable: boolean',
+        description: 'Whether tool consumers submit questions without keeping a callback alive.',
+        parameters: [],
+      },
+      {
+        signature: 'state(agent: Agent): UserQuestionState',
+        description: 'Read question state from the exact agent\'s session log.',
+        parameters: [{ name: 'agent', description: 'agent whose question state is requested.' }],
+        returns: 'the current pending request and most recent decision.',
+      },
+      {
+        signature: 'async request(request: AskUserQuestionRequest, callId: ToolCallId): Promise<AskUserQuestionAnswer | undefined>',
+        description: 'Request human input for a model tool call.',
+        parameters: [{ name: 'request', description: 'question batch and its live caller.' }, { name: 'callId', description: 'exact tool call requesting the answer.' }],
+        returns: 'an immediate human answer in live mode, or undefined after recording a durable request.',
+      },
+      {
+        signature: 'decide(agent: Agent, id: UserQuestionId, version: number, answer: AskUserQuestionAnswer | null): boolean',
+        description: 'Record a version-matched answer and wake a new turn. The caller must hold the shared session execution lease when deployed across replicas.',
+        parameters: [{ name: 'agent', description: 'freshly resumed, exclusively owned agent.' }, { name: 'id', description: 'durable request identity shown on the card.' }, { name: 'version', description: 'request event sequence shown on the card.' }, { name: 'answer', description: 'complete answer, or null to dismiss the card without starting work.' }],
+        returns: 'whether a new decision was recorded; identical retries return false.',
+      },
+      {
         signature: 'async ask(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer>',
         description: 'Ask the scoped answerer waterfall and wait for the user\'s answer.\n\nWhen a caller supplies an agent, human interaction is valid only for the exact live runtime root. Runtime ownership, not durable session lineage, decides this boundary: an owned child has no human answerer and would block forever, while a lineage-bearing session resumed as a new runtime root may ask normally.',
         parameters: [{ name: 'request', description: 'Questions, owner agent, and abort signal.' }],
@@ -2811,6 +2845,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Durable workspace registry. Startup waits for `sessionPersistence`, builds one canonical-cwd header index, and completes the one-time history bootstrap before the service becomes active. The persistence dependency is mandatory so an unavailable peer can never be mistaken for an empty history and commit the initialized marker.',
     methods: [
       {
+        signature: 'async refresh(): Promise<void>',
+        description: 'Refresh shared workspace metadata before a request uses synchronous lookups. Process-local deployments retain their existing in-memory read behavior.',
+        parameters: [],
+        returns: 'completion after a consistent database snapshot is installed.',
+      },
+      {
         signature: 'async create(path: string, title?: string): Promise<Workspace>',
         description: 'Create or reuse a workspace for an existing directory. The path is canonicalized through `fs.realpath`; a nonexistent path rejects with the original error and a non-directory rejects. Repeated calls for the same canonical path return the existing entity without changing its title. A newly created workspace is prepended to the durable registry order. Different canonical paths may share a display title.',
         parameters: [{ name: 'path', description: 'Existing directory to own, in any path spelling.' }, { name: 'title', description: 'Display title used only when a new record is created.' }],
@@ -2969,6 +3009,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'The turn is about to close: the model owes no response (no live tool calls, no fresh steering).',
     description: 'The turn is about to close: the model owes no response (no live tool calls, no fresh steering). Awaited before the boundary commits — a listener that objects steers (`agent.steer(...)`) and the machine re-reads its inbox: fresh steering runs another step, none closes the turn. Data decides, so listener order cannot change the outcome. The inverse control (stop a tool loop early) is data too: a tool result carrying `concludesTurn` ends the turn at its step. The conclusion never short-circuits already-submitted next-step work: same-step `additionalContexts` or racing steering still runs, and the turn closes only when that inbox drains.',
     parameters: [{ name: 'payload', description: '.signal - the current turn\'s explicit abort signal. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.' }],
+  },
+  {
+    name: 'api-gateway/invoke',
+    mode: 'waterfall',
+    signature: '\'api-gateway/invoke\'(request: InvokeRemoteRequest, next: () => Promise<unknown>): Promise<unknown>',
+    summary: 'Wrap a unary invocation before resolving process-local argument identities.',
+    description: 'Wrap a unary invocation before resolving process-local argument identities.',
+    parameters: [{ name: 'request', description: 'decoded wire request.' }],
   },
   {
     name: 'api-session/activity',
@@ -3888,7 +3936,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'Domain',
-    declaration: 'export interface Domain<S extends DomainSpec> {\n    readonly name: string;\n    readonly global: DomainGlobalHandleOf<S>;\n    table<N extends keyof S[\'tables\'] & string>(name: N): KvTable<TableKeyOf<S, N>, TableValueOf<S, N>>;\n    close(): Promise<void>;\n}',
+    declaration: 'export interface Domain<S extends DomainSpec> {\n    atomic<T>(operation: (domain: Domain<S>) => Promise<T>): Promise<T>;\n    readonly name: string;\n    readonly global: DomainGlobalHandleOf<S>;\n    table<N extends keyof S[\'tables\'] & string>(name: N): KvTable<TableKeyOf<S, N>, TableValueOf<S, N>>;\n    close(): Promise<void>;\n}',
   },
   {
     name: 'DomainChanged',
@@ -3920,7 +3968,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DomainImpl',
-    declaration: 'export class DomainImpl {\n    readonly name: string;\n    constructor(private readonly ctx: Context, spec: DomainSpec, private readonly unit: KvUnit, records: Map<string, Map<string, unknown>>, globalValue: unknown, private readonly onClosed: () => void);\n    get global(): DomainGlobal<unknown>;\n    table(name: string): KvTable<string, unknown>;\n    close(): Promise<void>;\n}',
+    declaration: 'export class DomainImpl {\n    readonly name: string;\n    constructor(private readonly ctx: Context, private readonly spec: DomainSpec, private readonly unit: KvUnit, records: Map<string, Map<string, unknown>>, globalValue: unknown, private readonly onClosed: () => void, private readonly changed?: (change: DomainChanged) => void);\n    get global(): DomainGlobal<unknown>;\n    table(name: string): KvTable<string, unknown>;\n    atomic<T>(operation: (domain: DomainImpl) => Promise<T>): Promise<T>;\n    close(): Promise<void>;\n}',
   },
   {
     name: 'DomainSpec',
@@ -3937,6 +3985,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'DshEnvironmentKey',
     declaration: 'export type DshEnvironmentKey = `${typeof DSH_ENV_PREFIX}${string}`;',
+  },
+  {
+    name: 'DurableUserQuestion',
+    declaration: 'export interface DurableUserQuestion {\n    id: UserQuestionId;\n    version: number;\n    callId: ToolCallId;\n    questions: AskUserQuestionItem[];\n}',
   },
   {
     name: 'DynamicCordisPackage',
@@ -4228,7 +4280,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'KvUnit',
-    declaration: 'export interface KvUnit {\n    loadAll(): Promise<{\n        tables: Record<string, Record<string, unknown>>;\n        global: unknown;\n    }>;\n    putRecord(table: string, key: string, value: unknown): Promise<void>;\n    deleteRecord(table: string, key: string): Promise<void>;\n    setGlobal(value: unknown): Promise<void>;\n    close(): Promise<void>;\n}',
+    declaration: 'export interface KvUnit {\n    transaction?<T>(operation: (unit: KvUnit) => Promise<T>): Promise<T>;\n    loadAll(): Promise<{\n        tables: Record<string, Record<string, unknown>>;\n        global: unknown;\n    }>;\n    putRecord(table: string, key: string, value: unknown): Promise<void>;\n    deleteRecord(table: string, key: string): Promise<void>;\n    setGlobal(value: unknown): Promise<void>;\n    close(): Promise<void>;\n}',
   },
   {
     name: 'KvUnitDescriptor',
@@ -4863,8 +4915,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionEventWindow {\n    session: SessionHeader;\n    target: SessionEvent;\n    events: SessionEvent[];\n    startSeq: number;\n    endSeq: number;\n}',
   },
   {
+    name: 'SessionExecutionLease',
+    declaration: 'export interface SessionExecutionLease extends AsyncDisposable {\n    readonly signal: AbortSignal;\n}',
+  },
+  {
     name: 'SessionFollowFrame',
-    declaration: 'export type SessionFollowFrame = {\n    readonly type: \'snapshot\';\n    readonly header: SessionHeader;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly projections: SessionProjectionBaseline;\n} | SessionEventEntry;',
+    declaration: 'export type SessionFollowFrame = {\n    readonly type: \'snapshot\';\n    readonly header: SessionHeader;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly projections: SessionProjectionBaseline;\n} | {\n    readonly type: \'state\';\n    readonly running: boolean;\n    readonly projections: SessionProjectionBaseline;\n} | SessionEventEntry;',
   },
   {
     name: 'SessionFollowRequest',
@@ -5001,6 +5057,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionPromptValue',
     declaration: 'export interface SessionPromptValue {\n    readonly accepted: true;\n}',
+  },
+  {
+    name: 'SessionQuestionDecisionRequest',
+    declaration: 'export interface SessionQuestionDecisionRequest {\n    readonly sessionId: SessionId;\n    readonly id: UserQuestionId;\n    readonly version: number;\n    readonly answer: AskUserQuestionAnswer | null;\n}',
+  },
+  {
+    name: 'SessionQuestionDecisionValue',
+    declaration: 'export interface SessionQuestionDecisionValue {\n    readonly accepted: true;\n    readonly duplicate: boolean;\n}',
   },
   {
     name: 'SessionQueuedItem',
@@ -5213,6 +5277,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SettingsUpdateSource',
     declaration: 'export type SettingsUpdateSource = \'update\' | \'provider\';',
+  },
+  {
+    name: 'SharedSessionExecution',
+    declaration: 'export interface SharedSessionExecution {\n    readonly pollIntervalMs: number;\n    acquire(id: SessionId): Promise<SessionExecutionLease>;\n    owns(id: SessionId): boolean;\n    assertOwned(id: SessionId): Promise<void>;\n    active(id: SessionId): Promise<boolean>;\n    cancel(id: SessionId): Promise<void>;\n}',
   },
   {
     name: 'ShellExecRequest',
@@ -5889,6 +5957,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'UserMessage',
     declaration: 'export interface UserMessage extends Message {\n    readonly role: \'user\';\n}',
+  },
+  {
+    name: 'UserQuestionDecision',
+    declaration: 'export interface UserQuestionDecision {\n    id: UserQuestionId;\n    version: number;\n    messageId: MessageId;\n    answer: AskUserQuestionAnswer | null;\n    approvedPlan: boolean;\n}',
+  },
+  {
+    name: 'UserQuestionId',
+    declaration: 'export type UserQuestionId = Branded<\'UserQuestionId\'>;',
+  },
+  {
+    name: 'UserQuestionState',
+    declaration: 'export interface UserQuestionState {\n    pending: DurableUserQuestion | null;\n    decision: UserQuestionDecision | null;\n}',
   },
   {
     name: 'VerifiedWebhookDelivery',

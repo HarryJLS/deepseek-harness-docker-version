@@ -1,0 +1,4 @@
+- id: user-questions
+  config:
+    durable: true
+    maxRequestBytes: 65536

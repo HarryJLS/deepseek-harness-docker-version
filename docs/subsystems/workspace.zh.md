@@ -8,6 +8,8 @@
 
 ## 标识
 
+启用共享会话执行时，工作区修改基于最新的原子领域快照执行，跨副本保留并发创建工作区及更新会话成员的结果。`WorkspaceRegistry.refresh()` 在同步查找前安装已提交元数据。API 共享事件流轮询替换基线，不附加会话 Agent；所有副本必须使用相同的文件系统路径。
+
 ```ts type-equiv
 /**
  * Identifies one workspace record. A generated uuid, never the path: path
@@ -249,6 +251,13 @@ Source: [`packages/api/workspace-controller/src/index.ts`](../../packages/api/wo
 Durable workspace registry. Startup waits for `sessionPersistence`, builds one canonical-cwd header index, and completes the one-time history bootstrap before the service becomes active. The persistence dependency is mandatory so an unavailable peer can never be mistaken for an empty history and commit the initialized marker.
 
 ```ts cordis-catalog
+/**
+ * Refresh shared workspace metadata before a request uses synchronous lookups.
+ * Process-local deployments retain their existing in-memory read behavior.
+ * @returns completion after a consistent database snapshot is installed.
+ */
+async refresh(): Promise<void>
+
 /**
  * Create or reuse a workspace for an existing directory. The path is
  * canonicalized through `fs.realpath`; a nonexistent path rejects with the

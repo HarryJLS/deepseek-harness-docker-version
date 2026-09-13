@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-User-interaction Service Definition. It owns `ctx.userQuestions`, the service a model-facing tool or permission plugin uses when it needs to pause work and ask the human for a decision. Use it when a consumer must suspend an operation until the user answers.
+Ask the human for a decision through `ctx.userQuestions`. Live delivery waits for an answerer; durable delivery records the question, lets the requesting tool end its turn, and accepts a later decision reconstructed from session history.
 
 ## Table of Contents
 
@@ -26,7 +26,10 @@ User-interaction Service Definition. It owns `ctx.userQuestions`, the service a 
 
 ### Public API
 
+Set `durable: true` to enable recorded tool questions; it defaults to false. `maxRequestBytes` limits a durable question or answer to 65,536 UTF-8 bytes by default. The Docker profile obtains these choices from [Nacos deployment configuration](../../../deploy/README.md#shared-confirmation).
+
 - `ctx.userQuestions.ask(request): Promise<AskUserQuestionAnswer>` Dispatch the answerer waterfall and wait for the first accepted answer.
+- `ctx.userQuestions.request(request, callId)` uses the configured delivery mode. A durable request returns without an answer; its Consumer concludes the turn. `decide()` checks the stored identity/version and records the new input under the caller's shared execution reservation.
 
 ### Key Types
 
@@ -47,7 +50,7 @@ When a request carries an agent, `ask()` authenticates its exact identity throug
 <a id="role"></a>
 ## Role
 
-This is the Service Definition package. Consumers such as `@deepseek-ai/dsh-tool-ask-user` depend on this service; the Web client contributes an Agent-scoped answerer through Remote Events. The loop stays unchanged: a tool call awaits the waterfall result, and that result resumes the normal agent loop.
+Consumers such as `@deepseek-ai/dsh-tool-ask-user` use this service; the Web client supplies live answers through Remote Events or durable decisions through Session Controller. Pending durable questions block further tool execution and model steps until answered or dismissed. The loop's existing turn-conclusion mechanism ends the requesting turn.
 
 <a id="model-experience"></a>
 ## Model Experience

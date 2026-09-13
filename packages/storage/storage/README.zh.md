@@ -25,6 +25,8 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
+KV 后端可实现可选的 `KvUnit.transaction()`，用于短时间的共享元数据更新。回调使用事务级单元，回调成功后所有写入一并提交，失败则回滚。领域 Consumer 通过[原子领域更新](../storage-domain/README.zh.md) 使用该操作。
+
 使用本包为组合提供持久的非会话存储：把它与后端和数据形式包一起挂载，宿主包即可通过 `ctx.storageDomain` 读写经过校验的记录。枢纽自身不增加任何可观察行为——它是让整个家族运转起来的交汇点——以下内容就是组合从它得到的一切。
 
 ### 何时使用

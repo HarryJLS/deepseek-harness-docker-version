@@ -1,6 +1,7 @@
 /** Cold Session history pagination and live-event source. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { setTimeout as delay } from 'node:timers/promises'
 import { canAccessUser, requestUserId } from '@deepseek-ai/dsh-user-context'
 import { isAppendSurfaceEvent } from '@deepseek-ai/dsh-session'
 import { isChunkRow, packChunkRuns, type ChunkRow } from '@deepseek-ai/dsh-session/chunk-rows'
@@ -51,6 +52,14 @@ export class SessionHistoryController {
    */
   async page(request: SessionPageRequest, signal: AbortSignal): Promise<SessionPage> {
     validatePageRequest(request)
+    if (this.ctx.get('sessionPersistence')?.sharedExecution !== undefined) {
+      const source = await this.sharedSource(request.address, signal)
+      if (request.throughSeq > (source.events.at(-1)?.seq ?? -1)) {
+        reject('bad-request', 'session page cursor is past the committed log', {})
+      }
+      const page = paginate(source.events, request.beforeSeq, request.maxMessages ?? DEFAULT_MAX_MESSAGES, request.throughSeq)
+      return { records: pageRecords(page.events), hasMore: page.hasMore }
+    }
     using source = await this.sourceFor(request.address, signal, false)
     signal.throwIfAborted()
     const sourceLog = source.events
@@ -87,6 +96,10 @@ export class SessionHistoryController {
    */
   async *follow(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame> {
     validateFollowRequest(request)
+    if (this.ctx.get('sessionPersistence')?.sharedExecution !== undefined) {
+      yield* this.followShared(request, signal)
+      return
+    }
     const { address } = request
     const target = addressId(address)
     const userId = requestUserId()
@@ -167,6 +180,85 @@ export class SessionHistoryController {
       signal.removeEventListener('abort', onAbort)
       disposeCreated()
       disposeEvent()
+    }
+  }
+
+  private async sharedSource(address: SessionAddress, signal: AbortSignal) {
+    const persistence = this.ctx.get('sessionPersistence')
+    if (persistence === undefined) throw new Error('Shared history requires session persistence.')
+    const source = await persistence.readFrom(addressId(address), 0, signal)
+    if (source.meta.cwd === undefined) rejectNotFound(address)
+    const projected = this.ctx.sessionProjections.restore({}, source.events, 0, source.meta)
+    validateAddress(address, source.meta, projected.snapshot)
+    return { ...source, ...projected }
+  }
+
+  private async *followShared(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame> {
+    const lifetime = new AbortController()
+    const close = (): void => { lifetime.abort() }
+    this.closeFollowers.add(close)
+    const combined = AbortSignal.any([signal, lifetime.signal])
+    try {
+      yield* this.followSharedCore(request, combined)
+    } catch (error) {
+      if (!combined.aborted) throw error
+    } finally {
+      this.closeFollowers.delete(close)
+    }
+  }
+
+  private async *followSharedCore(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame> {
+    const cancelled = (): boolean => signal.aborted
+    const persistence = this.ctx.get('sessionPersistence')
+    const execution = persistence?.sharedExecution
+    if (persistence === undefined || execution === undefined) throw new Error('Shared history is unavailable.')
+    const source = await this.sharedSource(request.address, signal)
+    const id = addressId(request.address)
+    const page = paginate(source.events, undefined, request.maxMessages ?? DEFAULT_MAX_MESSAGES)
+    let nextSeq = source.events.length
+    let checkpoint = source.checkpoint
+    let snapshot = source.snapshot
+    let boundary = source.events.findLast(event => event.type === 'turn/start' || event.type === 'turn/end')?.type
+    let wasRunning: boolean | undefined
+    let publishedSeq = -2
+    let publishedValues: string | undefined
+    yield {
+      type: 'snapshot', header: source.meta, cursor: nextSeq - 1,
+      records: pageRecords(page.events), hasMore: page.hasMore,
+      projections: projectionBlock(snapshot),
+    }
+    while (!cancelled()) {
+      const running = boundary === 'turn/start' && await execution.active(id)
+      const values = JSON.stringify(snapshot.values)
+      if (wasRunning !== running || publishedSeq !== snapshot.asOfSeq || publishedValues !== values) {
+        yield { type: 'state', running, projections: projectionBlock(snapshot) }
+        wasRunning = running
+        publishedSeq = snapshot.asOfSeq
+        publishedValues = values
+      }
+      try { await delay(execution.pollIntervalMs, undefined, { signal }) }
+      catch (error) { if (!cancelled()) throw error }
+      if (cancelled()) return
+      const suffix = await persistence.readFrom(id, nextSeq, signal)
+      let appended = suffix.events
+      let projected
+      try {
+        projected = this.ctx.sessionProjections.restore(checkpoint, appended, nextSeq, suffix.meta)
+      } catch {
+        // A preset can register a new unit after the preceding checkpoint.
+        const fresh = await this.sharedSource(request.address, signal)
+        if (fresh.events.length < nextSeq) reject('internal', 'shared session history moved behind its cursor', {})
+        appended = fresh.events.slice(nextSeq)
+        projected = fresh
+      }
+      checkpoint = projected.checkpoint
+      snapshot = projected.snapshot
+      for (const event of appended) {
+        if (event.seq !== nextSeq) reject('internal', 'shared session history has an event gap', {})
+        nextSeq++
+        if (event.type === 'turn/start' || event.type === 'turn/end') boundary = event.type
+        yield entryFor(event)
+      }
     }
   }
 

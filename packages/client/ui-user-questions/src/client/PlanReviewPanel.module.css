@@ -109,7 +109,32 @@
   }
 
   .footer {
-    align-items: flex-end;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
     padding: 8px 12px 10px;
+  }
+
+  .feedback {
+    overflow-wrap: anywhere;
+  }
+
+  .feedback:empty {
+    display: none;
+  }
+
+  .actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
+  }
+
+  .discuss {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .actions > :last-child {
+    grid-column: 2;
   }
 }

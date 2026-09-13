@@ -10,7 +10,6 @@
 
 import { stat } from 'node:fs/promises'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
-import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceRecord } from './spec.ts'
 import type { Workspace, WorkspaceId } from './types.ts'
 import { realpathNormalize } from './paths.ts'
@@ -33,10 +32,12 @@ export class WorkspaceMoveInvalidError extends Error {
  */
 export interface WorkspaceEntityHost {
   /**
-   * Resolve the open `workspaces` table.
-   * @returns the table; throws while the registry has not started yet.
+   * Transform a workspace on the registry's serialized write path.
+   * @param id - workspace identity.
+   * @param update - pure record transform over the latest snapshot.
+   * @returns the committed next record.
    */
-  table(): KvTable<WorkspaceId, WorkspaceRecord>
+  update(id: WorkspaceId, update: (record: WorkspaceRecord) => WorkspaceRecord): Promise<WorkspaceRecord>
 
   /**
    * Read a session's canonical directory from the registry's header index.
@@ -202,7 +203,7 @@ export class WorkspaceEntity implements Workspace {
   private async mutate(fn: (record: WorkspaceRecord) => WorkspaceRecord): Promise<void> {
     let next: WorkspaceRecord
     try {
-      next = await this.host.table().update(this.id, (current) => {
+      next = await this.host.update(this.id, (current) => {
         const changed = fn(current)
         const sessionIds = changed.sessionIds.filter(
           id => this.host.sessionPath(id) === changed.path,

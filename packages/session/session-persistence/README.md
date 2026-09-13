@@ -47,6 +47,8 @@ const headers = await ctx.sessionPersistence.list()        // every stored sessi
 
 ### Resuming and crash recovery
 
+A backend may expose `sharedExecution` for replica-safe activation. Consumers acquire its reservation before `prepare` or mutating recovery, hold it through agent quiescence and flush, and then release it. Observers of another replica's live work use `readFrom`, not cold-repairing `load`. The [MySQL provider](../session-persistence-mysql/README.md) implements this optional capability.
+
 Resume is `load` plus session preparation: the stored log comes back with its header lineage intact, so a resumed agent sees the same history and composition. A session that crashed mid-turn reloads with its interrupted final turn preserved and balanced: `load` appends synthetic `tool/result` and `turn/end {interrupted}` closers for unanswered calls instead of dropping the events — a single turn can be large, and those events were durably written before the crash. Only a never-fully-written torn tail fragment is discarded.
 
 ### Failures and recovery

@@ -15,6 +15,7 @@ kind: "deployment-reference"
 
 - [数据库配置](#database-configuration)
 - [Redis 缓存](#redis-cache)
+- [共享确认](#shared-confirmation)
 - [临时文件](#temporary-files)
 - [用户隔离](#user-isolation)
 - [表结构](#schema)
@@ -52,6 +53,11 @@ deployment:
     commandTimeoutMs: 2000
   attachments:
     temporaryRoot: tmp/dsh-attachments
+  execution:
+    leaseMs: 30000
+    renewIntervalMs: 5000
+    pollIntervalMs: 500
+    maxQuestionBytes: 65536
 ```
 
 这些凭据用于随附的本地开发栈，生产环境应使用专用数据库账号。采用独立连接字段时，示例中的数据库字段均为必填项。条目缺失、Nacos 不可达、字段无效或数据库配置不完整都会在应用打开连接池之前阻止启动。数据库变更在容器重启后生效。
@@ -75,6 +81,19 @@ dsh-<app>:db:<database>:user:<user>:session:<session>:{<row-hash>}:event:<seq>:p
 每个 Redis 字符串连同 JSON 包装最多占用 `maxChunkBytes`。较大事件拆成带校验和的字节分块，流水线大小由 `batchSize` 限制。超过 `maxEventBytes` 的事件完整保留在 MySQL 中，不进入 Redis。不创建持续膨胀的用户级或会话级列表、哈希或整段对话值。每个读取或写入的 key 都获得 `ttlSeconds` 有效期，默认 172800 秒（2 天）；过期不删除数据库历史。
 
 MySQL 提交后才发布缓存。每次读取先检查数据库用户归属和日志范围，再从 Redis 读取事件页。过期、缺失、格式错误或部分淘汰的页会从 MySQL 重新加载并回填 Redis。运行时 Redis 故障也使用 MySQL，但启动仍要求配置的 Redis 服务可连接。随附的开发 Redis 关闭快照和 AOF，内存限制为 256 MiB，采用 `allkeys-lru`；整个缓存丢失也可恢复。
+
+<a id="shared-confirmation"></a>
+## 共享确认
+
+Docker 配置档启用持久化问题与方案审核。提交的问题记录在既有会话事件 JSON 中，提问的本轮随即结束。原 Web 卡片将会话、问题标识、版本和决定作为新请求提交，任意副本均可加载已提交上下文并继续。相同重试不会再次启动已经执行的后续流程；过期版本或冲突回答会被拒绝。
+
+同一 Nacos 文档中的 `deployment.execution` 管理上述时间与问题大小限制。可续期的执行占用使用既有 `dsh_kv_record` 表中的小记录，不增加审批表或会话列。过期以数据库时间为准，每次会话写入在事务中验证执行权，Redis 淘汰不会移除保护。一次操作持有执行权直到 agent 与写入结束，其间其他修改请求返回忙碌。取消请求可以进入其他副本；历史事件流轮询已提交事件，不依赖执行副本的内存。
+
+共用表的每个并发副本仍需独立的 Nacos 配置项 `deployment.database.snowflakeWorkerId`。共享文件要求所有副本使用相同 NAS 挂载和相对目录，请将 Compose 中的附件 tmpfs 替换为该挂载。数据库历史与待确认卡片可在文件清理后保留，但上下文缓存不能恢复已删除的文件内容或预览。
+
+服务于相同活跃会话的副本使用相同的持久化确认版本和 Nacos 策略。工作区元数据通过短数据库事务刷新，包括新建工作区和并发会话关联。
+
+此模式支持使用 `exit_plan_mode` 和 `ask_user_question` 的顺序式顶层 Web 会话，不序列化存活的权限审批回调、运行中的终端、委派任务或任意插件资源。外部副作用执行期间崩溃不能证明该操作是否完成；上传和业务接口需要自身的幂等标识，未完成的副作用不会自动重放。
 
 <a id="temporary-files"></a>
 ## 临时文件
@@ -150,5 +169,5 @@ Web 应用监听 3080。本地 Nacos 控制台使用 8080，API 使用 8848，�
 
 - Nacos 设置与凭据含有密钥。应限制其命名空间访问，并在非开发部署中开启服务器鉴权。
 - 源码中的示例 Nacos 凭据不是密钥管理机制。生产凭据必须通过部署专用的安全构建或经批准的密钥注入设计提供。
-- 会话上下文通过 Redis 与 MySQL 共享，但活跃 Agent、收件箱、事件流和任务仍属于各自进程。网关必须将活跃会话固定路由到所属进程；此缓存不是分布式执行、写入租约或多租户 shell 沙箱。切换节点恢复前，应先停止原执行节点。
+- 共享确认不会转移任意运行中的插件资源，也不提供多租户 shell 沙箱。执行、文件共享和外部副作用的限制见[共享确认](#shared-confirmation)。
 - 验证新部署和回滚流程之前，必须保留原数据库与配置备份。

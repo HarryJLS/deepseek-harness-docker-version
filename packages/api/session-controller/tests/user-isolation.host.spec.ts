@@ -71,7 +71,7 @@ describe('platform session ownership', () => {
         await expect(iterator.next()).rejects.toMatchObject({ failure: { code: 'session-not-found' } })
         await expect(controller.create({ sessionId: id, cwd: '/tmp' })).rejects.toMatchObject({ failure: { code: 'session-not-found' } })
         await expect(controller.resolveAgent(id)).resolves.toMatchObject({ error: { code: 'session-not-found' } })
-        expect(() => controller.cancel({ sessionId: id })).toThrow('not found')
+        await expect(controller.cancel({ sessionId: id })).rejects.toThrow('not found')
       })
     } finally { await ctx.fiber.dispose() }
   })

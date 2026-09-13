@@ -5,8 +5,13 @@
 **/dist
 **/.turbo
 **/coverage
+**/.venv
+**/__pycache__
+**/.pytest_cache
 deploy/testplugin
 *.log
+.artifacts
+.playwright-mcp
 **/.env
 **/.env.*
 !**/.env.example

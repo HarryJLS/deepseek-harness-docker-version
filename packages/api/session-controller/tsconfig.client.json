@@ -11,6 +11,7 @@
     "src/remote-events.ts"
   ],
   "references": [
+    { "path": "../../interaction/user-questions" },
     { "path": "../../../vendor/cordis" },
     { "path": "../gateway/tsconfig.client.json" },
     { "path": "../../attachment/attachment" },

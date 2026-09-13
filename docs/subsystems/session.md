@@ -579,6 +579,8 @@ The backends that consume this contract are on [persistence.md](persistence.md).
 
 ## Remote catalog and workspace opening
 
+`SessionQuestionDecisionRequest` addresses a stored question by Session id, question id, version, and structured answer or dismissal. `SessionQuestionDecisionValue` acknowledges acceptance and identifies duplicate decisions. Shared execution reserves before activation, commits input before acknowledgement, and follows committed history with projection/running-state frames; [the Session Controller](../../packages/api/session-controller/README.md) owns these operations.
+
 `ModelCatalog` is the Host-generation model directory returned by `session/modelCatalog`: it carries the deployment default, routable provider ids, successful provider groups, and isolated provider failures. It is not derived from one Session and remains separate from Session projections.
 
 `SessionOpenWorkspacePathRequest` carries an absolute or workspace-resolved `path`. `SessionOpenWorkspacePathValue` confirms that the Host accepted the native handoff. A Session-aware Client resolves relative paths against its current Session cwd when known; the controller hands the path to the opener unchanged and reports invalid requests, cancellation, and opener failures through the Session Remote error vocabulary.
@@ -687,6 +689,13 @@ inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<{ meta: SessionH
 @Remote('prompt') prompt(request: SessionPromptRequest, signal: AbortSignal): Promise<SessionPromptValue>
 
 /**
+ * Answer a persisted question and admit its continuation on any replica.
+ * @param request - session, question identity/version, and the user's answer.
+ * @returns acknowledgement after the decision and admitted input are durable.
+ */
+@Remote('answerQuestion') answerQuestion(request: SessionQuestionDecisionRequest): Promise<SessionQuestionDecisionValue>
+
+/**
  * Read one image proven reachable from the addressed Session log.
  * @param request - Session and attachment identities used for authorization.
  * @returns the durable attachment reference and base64-encoded bytes.
@@ -705,7 +714,7 @@ inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<{ meta: SessionH
  * @param request - Session whose active Agent turn is cancelled.
  * @returns acknowledgement that cancellation was requested.
  */
-@Remote('cancel') cancel(request: SessionCancelRequest): SessionCancelValue
+@Remote('cancel') async cancel(request: SessionCancelRequest): Promise<SessionCancelValue>
 
 /**
  * Read one cold-safe, message-aligned Session history page.

@@ -1,0 +1,36 @@
+- region "Approve this plan and leave plan mode?":
+  - text: Plan review
+  - heading "Add a --greeting flag to the CLI" [level=1]:
+    - text: Add a
+    - code: "--greeting"
+    - text: flag to the CLI
+  - list:
+    - listitem:
+      - strong: "Goal & criteria:"
+      - text: the CLI accepts
+      - code: "--greeting <text>"
+      - text: (and its short alias if the existing parser already exposes one for flags of this kind); when supplied, the greeting text replaces the default message where the CLI currently emits its greeting; without the flag, behavior is byte-for-byte unchanged.
+    - listitem:
+      - strong: "Implementation:"
+      - text: locate the argument parser (the same place sibling string flags like
+      - code: "--name"
+      - text: /
+      - code: "--message"
+      - text: are declared) and add
+      - code: greeting
+      - text: as an optional string with the existing default, thread it through to the greeting-emitting code path, and document it in the CLI's
+      - code: "--help"
+      - text: text / usage string next to the other flags; no new files, no new dependencies.
+    - listitem:
+      - strong: "Edge cases & verification:"
+      - text: empty string is treated as "not provided" (fall back to default), whitespace-only and non-ASCII values pass through unmodified, unknown/abbreviated flags keep their current error behavior, repeated
+      - code: "--greeting"
+      - text: uses the existing last-wins convention, and existing CLI tests plus one added case for
+      - code: "--greeting"
+      - text: (provided and omitted) pass.
+  - status
+  - button "Chat about it":
+    - img
+    - text: Chat about it
+  - button "Refuse"
+  - button "Approve"

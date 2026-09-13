@@ -46,9 +46,13 @@
     "@deepseek-ai/cordis": "workspace:^"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-user-context": "workspace:^",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-storage-mysql": "workspace:^",
+    "@deepseek-ai/dsh-session-persistence-mysql": "workspace:^",
+    "mysql2": "^3.11.5",
     "@deepseek-ai/dsh-brand": "workspace:^",
     "@deepseek-ai/dsh-storage-domain": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",

@@ -8,6 +8,8 @@
 
 ## 问题选项
 
+持久化交付使用[纯类型声明](../../packages/interaction/user-questions/src/types.ts)中的 `UserQuestionState`，记录完整待确认批次、唯一 `UserQuestionId`、工具调用引用和事件序号版本。决定记录相同标识与版本、回答或关闭操作、计划批准事实及后续 `MessageId`。`userQuestions` 投影重建此状态，Web Client 通过 Session Controller 提交决定，不回答存活回调。[部署配置](../../deploy/README.zh.md#shared-confirmation) 定义共享执行与文件保留策略。
+
 `AskUserQuestionOption` 包含一个可供选择的选项。`label` 是面向用户的选项文字，同时也是面向模型的选中值；`description` 是可选的 UI 帮助文本。
 
 ```ts type-equiv
@@ -131,6 +133,32 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ```ts cordis-catalog
 /**
+ * Read question state from the exact agent's session log.
+ * @param agent - agent whose question state is requested.
+ * @returns the current pending request and most recent decision.
+ */
+state(agent: Agent): UserQuestionState
+
+/**
+ * Request human input for a model tool call.
+ * @param request - question batch and its live caller.
+ * @param callId - exact tool call requesting the answer.
+ * @returns an immediate human answer in live mode, or undefined after recording a durable request.
+ */
+async request(request: AskUserQuestionRequest, callId: ToolCallId): Promise<AskUserQuestionAnswer | undefined>
+
+/**
+ * Record a version-matched answer and wake a new turn.
+ * The caller must hold the shared session execution lease when deployed across replicas.
+ * @param agent - freshly resumed, exclusively owned agent.
+ * @param id - durable request identity shown on the card.
+ * @param version - request event sequence shown on the card.
+ * @param answer - complete answer, or null to dismiss the card without starting work.
+ * @returns whether a new decision was recorded; identical retries return false.
+ */
+decide(agent: Agent, id: UserQuestionId, version: number, answer: AskUserQuestionAnswer | null): boolean
+
+/**
  * Ask the scoped answerer waterfall and wait for the user's answer.
  *
  * When a caller supplies an agent, human interaction is valid only for the
@@ -148,6 +176,8 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
  */
 async ask(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer>
 ```
+
+Types: [Agent](core.zh.md) · [ToolCallId](llm-streaming.zh.md)
 
 Source: [`packages/interaction/user-questions/src/index.ts`](../../packages/interaction/user-questions/src/index.ts)
 

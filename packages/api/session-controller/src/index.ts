@@ -1,11 +1,15 @@
 /** Session Remote owner: cold reads, explicit Agent commands, and live control state. */
 
 import { Context } from '@deepseek-ai/cordis'
+import { randomUUID } from 'node:crypto'
 import z from '@deepseek-ai/schemastery'
 import { DEFAULT_USER_ID, withUser } from '@deepseek-ai/dsh-user-context'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import { canOpenNativePath, openNativePath } from '@deepseek-ai/dsh-native-command'
-import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-user-questions'
+import type {} from '@deepseek-ai/dsh-api-gateway'
 import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import { Remote, TypertRemoteFailure, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import {
@@ -22,6 +26,7 @@ import { ApiSessionList, DEFAULT_COLD_BLANK_PROBE_MAX_BYTES } from './list.ts'
 import { buildModelCatalog } from './catalog.ts'
 import { installModelSelectionProjection } from './model-selection-projection.ts'
 import { SessionSkillCatalog } from './skill-catalog.ts'
+import { SessionExecutionController } from './execution.ts'
 import type {
   ModelCatalog,
   SessionAttachmentRequest,
@@ -51,6 +56,8 @@ import type {
   SessionSelectModelValue,
   SessionUpdateQueueRequest,
   SessionUpdateQueueValue,
+  SessionQuestionDecisionRequest,
+  SessionQuestionDecisionValue,
 } from './types.ts'
 
 export type * from './types.ts'
@@ -101,6 +108,7 @@ export class SessionController extends TypertRemoteService {
   })
 
   private readonly agents: ApiSessionAgentController
+  private readonly execution: SessionExecutionController
   private readonly commands: SessionCommandController
   private readonly controlState: SessionControlController
   private readonly history: SessionHistoryController
@@ -117,6 +125,7 @@ export class SessionController extends TypertRemoteService {
     super(ctx, 'sessionController', { namespace: 'session' })
     installModelSelectionProjection(ctx)
     this.agents = new ApiSessionAgentController(ctx)
+    this.execution = new SessionExecutionController(ctx, this.agents)
     this.commands = new SessionCommandController(ctx, this.agents, process.cwd())
     this.controlState = new SessionControlController(ctx)
     // Registered before history so reverse-order teardown closes every
@@ -132,15 +141,24 @@ export class SessionController extends TypertRemoteService {
     this.openPath = internals.openPath ?? openNativePath
     this.canOpenPath = internals.canOpenPath
       ?? (() => config.nativeOpen ?? (internals.openPath !== undefined || canOpenNativePath()))
+    ctx.on('api-gateway/invoke', (request, next) => {
+      if (request.namespace === 'session' || ctx.get('sessionPersistence')?.sharedExecution === undefined) return next()
+      const id = request.args.agentId
+      return typeof id === 'string' && id.length > 0
+        ? this.execution.run(SessionId(id), next)
+        : next()
+    })
     ctx.plugin(SessionFileReferences)
     ctx.plugin(SessionSkillCatalog)
 
     ctx.on('session/created', (session) => {
+      if (ctx.get('sessionPersistence')?.sharedExecution !== undefined) return
       withUser(session.header.userId ?? DEFAULT_USER_ID, () => {
         ctx.emit('api-session/added', this.listState.summaryFor(session))
       })
     })
     ctx.on('session/disposed', (session) => {
+      if (ctx.get('sessionPersistence')?.sharedExecution !== undefined) return
       withUser(session.header.userId ?? DEFAULT_USER_ID, () => {
         ctx.emit('api-session/removed', session.id)
       })
@@ -173,6 +191,10 @@ export class SessionController extends TypertRemoteService {
   }
 
   private promote(observation: SessionObservation): void {
+    if (this.ctx.get('sessionPersistence')?.sharedExecution !== undefined) {
+      observation[Symbol.dispose]()
+      return
+    }
     const sessionId = observation.header.id
     const task = (async () => {
       using ownedObservation = observation
@@ -241,7 +263,9 @@ export class SessionController extends TypertRemoteService {
    */
   @Remote('create')
   create(request: SessionCreateRequest): Promise<SessionCreateValue> {
-    return this.commands.create(request)
+    if (this.ctx.get('sessionPersistence')?.sharedExecution === undefined) return this.commands.create(request)
+    const sessionId = request.sessionId ?? SessionId(`session-${randomUUID()}`)
+    return this.execution.run(sessionId, () => this.commands.create({ ...request, sessionId }))
   }
 
   /**
@@ -251,7 +275,7 @@ export class SessionController extends TypertRemoteService {
    */
   @Remote('selectModel')
   selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
-    return this.commands.selectModel(request)
+    return this.execution.run(request.sessionId, () => this.commands.selectModel(request))
   }
 
   /**
@@ -316,7 +340,7 @@ export class SessionController extends TypertRemoteService {
    */
   @Remote('rename')
   rename(request: SessionRenameRequest): Promise<SessionRenameValue> {
-    return this.commands.rename(request)
+    return this.execution.run(request.sessionId, () => this.commands.rename(request))
   }
 
   /**
@@ -326,7 +350,9 @@ export class SessionController extends TypertRemoteService {
    */
   @Remote('fork')
   fork(request: SessionForkRequest): Promise<SessionForkValue> {
-    return this.commands.fork(request)
+    if (this.ctx.get('sessionPersistence')?.sharedExecution === undefined) return this.commands.fork(request)
+    const childId = SessionId(`session-${randomUUID()}`)
+    return this.execution.run(childId, () => this.commands.fork(request, childId))
   }
 
   /**
@@ -338,7 +364,27 @@ export class SessionController extends TypertRemoteService {
   @Remote('prompt')
   prompt(request: SessionPromptRequest, signal: AbortSignal): Promise<SessionPromptValue> {
     signal.throwIfAborted()
-    return this.commands.prompt(request)
+    return this.execution.run(request.sessionId, () => this.commands.prompt(request))
+  }
+
+  /**
+   * Answer a persisted question and admit its continuation on any replica.
+   * @param request - session, question identity/version, and the user's answer.
+   * @returns acknowledgement after the decision and admitted input are durable.
+   */
+  @Remote('answerQuestion')
+  answerQuestion(request: SessionQuestionDecisionRequest): Promise<SessionQuestionDecisionValue> {
+    return this.execution.run(request.sessionId, async () => {
+      const questions = this.ctx.get('userQuestions')
+      if (questions === undefined) throw new TypertRemoteFailure({
+        code: 'service-unavailable', message: 'User questions are unavailable.', details: {},
+      })
+      const found = await this.agents.resolveAgent(request.sessionId)
+      if ('error' in found) throw new TypertRemoteFailure(found.error)
+      const recorded = questions.decide(found.agent, request.id, request.version, request.answer)
+      await this.ctx.parallel('session/flush', found.agent.session)
+      return { accepted: true, duplicate: !recorded }
+    })
   }
 
   /**
@@ -367,8 +413,11 @@ export class SessionController extends TypertRemoteService {
    * @returns acknowledgement that cancellation was requested.
    */
   @Remote('cancel')
-  cancel(request: SessionCancelRequest): SessionCancelValue {
-    return this.commands.cancel(request)
+  async cancel(request: SessionCancelRequest): Promise<SessionCancelValue> {
+    const execution = this.ctx.get('sessionPersistence')?.sharedExecution
+    if (execution === undefined) return this.commands.cancel(request)
+    await execution.cancel(request.sessionId)
+    return { accepted: true }
   }
 
   /**

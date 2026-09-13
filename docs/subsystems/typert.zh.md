@@ -340,4 +340,25 @@ async stream(request: InvokeRemoteRequest): Promise<AsyncIterable<unknown>>
 ```
 
 Source: [`packages/api/gateway/src/index.ts`](../../packages/api/gateway/src/index.ts)
+
+<a id="api-gateway-events"></a>
+
+### `api-gateway/*` events
+
+<a id="api-gatewayinvoke--waterfall"></a>
+
+#### `api-gateway/invoke` — waterfall
+
+Wrap a unary invocation before resolving process-local argument identities.
+
+```ts cordis-catalog
+/**
+ * Wrap a unary invocation before resolving process-local argument identities.
+ * @param request - decoded wire request.
+ * @mode waterfall
+ */
+'api-gateway/invoke'(request: InvokeRemoteRequest, next: () => Promise<unknown>): Promise<unknown>
+```
+
+Source: [`packages/api/gateway/src/types.ts`](../../packages/api/gateway/src/types.ts)
 <!-- END GENERATED cordis-surface -->

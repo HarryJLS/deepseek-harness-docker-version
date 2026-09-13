@@ -6,10 +6,9 @@
  * writable volume and no stable host: several replicas share one medium, and a
  * replica that is replaced loses nothing.
  *
- * Values are opaque JSON to this layer, so records live in `json` columns and
- * every operation is a single statement — the contract requires each call to be
- * atomic on the medium and durable once resolved, which a committed statement
- * already gives.
+ * Values are opaque JSON in `json` columns. Individual writes commit one
+ * statement; short unit transactions lock metadata and commit their scoped
+ * writes together before callers publish the resulting cache.
  *
  * Applications share the tables and are separated by the `app` column, which
  * leads every logical unique index. MySQL has no schema inside a database, so there is
@@ -67,7 +66,37 @@ class MysqlKvUnit implements KvUnit {
     private readonly app: string,
     private readonly descriptor: KvUnitDescriptor,
     private readonly nextId: () => string,
+    private readonly connection?: mysql.PoolConnection,
   ) {}
+
+  private get executor(): mysql.Pool | mysql.PoolConnection {
+    return this.connection ?? this.pool
+  }
+
+  async transaction<T>(operation: (unit: KvUnit) => Promise<T>): Promise<T> {
+    this.assertOpen()
+    if (this.connection !== undefined) throw new Error('storage-mysql: nested unit transactions are not supported')
+    const conn = await this.pool.getConnection()
+    try {
+      await conn.beginTransaction()
+      const [rows] = await conn.query<mysql.RowDataPacket[]>(
+        `SELECT id FROM \`${UNIT_TABLE}\` WHERE app = ? AND unit = ? AND is_deleted = 'N' FOR UPDATE`,
+        [this.app, this.descriptor.name],
+      )
+      if (rows.length !== 1) throw new Error(`storage-mysql: unit ${this.descriptor.name} is unavailable`)
+      const scoped = new MysqlKvUnit(this.pool, this.app, this.descriptor, this.nextId, conn)
+      let result: T
+      try { result = await operation(scoped) }
+      finally { await scoped.close() }
+      await conn.commit()
+      return result
+    } catch (error) {
+      await conn.rollback().catch(() => undefined)
+      throw error
+    } finally {
+      conn.release()
+    }
+  }
 
   /** Refuse every operation once released, as the contract requires. */
   private assertOpen(): void {
@@ -96,7 +125,7 @@ class MysqlKvUnit implements KvUnit {
     // documents below are already parsed and unaliased. Re-parsing a value the
     // driver handed back would double-decode any record that is itself a JSON
     // string.
-    const [records] = await this.pool.query<mysql.RowDataPacket[]>(
+    const [records] = await this.executor.query<mysql.RowDataPacket[]>(
       `SELECT tbl, key_name, value FROM \`${RECORD_TABLE}\` WHERE app = ? AND unit = ? AND is_deleted = 'N'`,
       [this.app, this.descriptor.name],
     )
@@ -108,7 +137,7 @@ class MysqlKvUnit implements KvUnit {
       bucket[row.key_name as string] = row.value
     }
     if (!this.descriptor.hasGlobal) return { tables, global: null }
-    const [global] = await this.pool.query<mysql.RowDataPacket[]>(
+    const [global] = await this.executor.query<mysql.RowDataPacket[]>(
       `SELECT value FROM \`${GLOBAL_TABLE}\` WHERE app = ? AND unit = ? AND is_deleted = 'N'`,
       [this.app, this.descriptor.name],
     )
@@ -120,7 +149,7 @@ class MysqlKvUnit implements KvUnit {
     this.assertOpen()
     this.assertTable(table)
     const json = toJsonText(value ?? null)
-    await this.pool.query(
+    await this.executor.query(
       `INSERT INTO \`${RECORD_TABLE}\` (${MYSQL_AUDIT_COLUMNS}, app, unit, tbl, key_name, value)
        VALUES (${MYSQL_AUDIT_VALUES}, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE value = VALUES(value), ${MYSQL_AUDIT_UPDATE}`,
@@ -131,7 +160,7 @@ class MysqlKvUnit implements KvUnit {
   async deleteRecord(table: string, key: string): Promise<void> {
     this.assertOpen()
     this.assertTable(table)
-    await this.pool.query(
+    await this.executor.query(
       `UPDATE \`${RECORD_TABLE}\` SET is_deleted = 'Y', modifier = ?, gmt_modified = CURRENT_TIMESTAMP
        WHERE app = ? AND unit = ? AND tbl = ? AND key_name = ? AND is_deleted = 'N'`,
       [currentUserId(), this.app, this.descriptor.name, table, key],
@@ -147,7 +176,7 @@ class MysqlKvUnit implements KvUnit {
       )
     }
     const json = toJsonText(value ?? null)
-    await this.pool.query(
+    await this.executor.query(
       `INSERT INTO \`${GLOBAL_TABLE}\` (${MYSQL_AUDIT_COLUMNS}, app, unit, value)
        VALUES (${MYSQL_AUDIT_VALUES}, ?, ?, ?)
        ON DUPLICATE KEY UPDATE value = VALUES(value), ${MYSQL_AUDIT_UPDATE}`,
@@ -215,6 +244,7 @@ class MysqlBackend implements StorageBackend {
       this.open.add(descriptor.name)
       const unit = new MysqlKvUnit(this.pool, this.app, descriptor, this.nextId)
       return {
+        transaction: operation => unit.transaction(operation),
         loadAll: () => unit.loadAll(),
         putRecord: (table, key, value) => unit.putRecord(table, key, value),
         deleteRecord: (table, key) => unit.deleteRecord(table, key),

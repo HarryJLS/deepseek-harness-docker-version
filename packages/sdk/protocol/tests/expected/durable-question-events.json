@@ -1,0 +1,35 @@
+[
+  {
+    "type": "user-questions/state",
+    "data": {
+      "pending": {
+        "id": "review-1",
+        "version": 1,
+        "callId": "plan-call",
+        "questions": [
+          {
+            "id": "plan-review",
+            "question": "Approve this plan?",
+            "detail": "# Update tmp/shared/proposal.txt",
+            "options": [{"label": "Approve"}, {"label": "Reject"}],
+            "intent": {"kind": "plan-review", "approve": "Approve"}
+          }
+        ]
+      },
+      "decision": null
+    }
+  },
+  {
+    "type": "user-questions/state",
+    "data": {
+      "pending": null,
+      "decision": {
+        "id": "review-1",
+        "version": 1,
+        "messageId": "decision-message",
+        "answer": {"answers": [{"id": "plan-review", "selected": ["Approve"]}]},
+        "approvedPlan": true
+      }
+    }
+  }
+]

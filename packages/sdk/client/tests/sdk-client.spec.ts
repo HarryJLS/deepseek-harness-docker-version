@@ -63,6 +63,15 @@ async function tempDir(prefix: string): Promise<string> {
 }
 
 describe('DeepSeekHarness', () => {
+  it('retains durable question and decision payloads in the SDK event stream', async () => {
+    const expected = JSON.parse(await readFile(
+      new URL('../../protocol/tests/expected/durable-question-events.json', import.meta.url), 'utf8',
+    )) as object[]
+    const harness = harnessWith({ FAKE_SESSION_EVENTS: JSON.stringify(expected) })
+    const result = await harness.run('question events')
+    expect(result.events.filter(event => event.type.startsWith('user-questions/'))
+      .map(event => ({ type: event.type, data: event.data }))).toEqual(expected)
+  })
   it('ignores notifications that precede the submitted message receipt', async () => {
     const notifications = [
       { method: 'session.status', params: { sessionId: 'owned', status: 'running' } },

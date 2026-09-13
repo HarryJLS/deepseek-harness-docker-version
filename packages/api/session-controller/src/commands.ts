@@ -28,6 +28,7 @@ import {
   assertApiSessionUser,
 } from './agent.ts'
 import { canAccessUser } from '@deepseek-ai/dsh-user-context'
+import type {} from '@deepseek-ai/dsh-user-questions'
 import type {
   SessionAttachmentRequest,
   SessionAttachmentValue,
@@ -78,6 +79,7 @@ export class SessionCommandController {
     const sessionId = request.sessionId ?? SessionId(`session-${randomUUID()}`)
     let workspace: Workspace | undefined
     if (request.workspaceId !== undefined) {
+      if (this.ctx.get('sessionPersistence')?.sharedExecution !== undefined) await this.ctx.workspaceRegistry.refresh()
       workspace = this.ctx.workspaceRegistry.get(request.workspaceId)
       if (workspace === undefined) {
         reject('workspace-not-found', `workspace "${request.workspaceId}" not found`, {
@@ -96,6 +98,11 @@ export class SessionCommandController {
       )
     } catch (error) {
       this.rejectCreation(sessionId, error)
+    }
+    const persistence = this.ctx.get('sessionPersistence')
+    if (persistence?.sharedExecution !== undefined) {
+      await persistence.ensureMaterialized(adopted.session)
+      await this.ctx.parallel('session/flush', adopted.session)
     }
     if (workspace !== undefined) {
       try {
@@ -184,16 +191,28 @@ export class SessionCommandController {
   /**
    * Create a new ordinary Session from one completed-turn prefix.
    * @param request - source Session and optional event anchor.
+   * @param reservedChildId - identity already reserved by shared execution, when enabled.
    * @returns the new Session identity.
    */
-  async fork(request: SessionForkRequest): Promise<SessionForkValue> {
+  async fork(request: SessionForkRequest, reservedChildId?: SessionId): Promise<SessionForkValue> {
     if (request.atSeq !== undefined
       && (!Number.isInteger(request.atSeq) || request.atSeq < 0)) {
       reject('bad-request', 'atSeq must be a non-negative integer', {})
     }
-    let observed: SessionObservation
+    let observed: Pick<SessionObservation, 'header' | 'events' | 'projections'> & Disposable
     try {
-      observed = await this.ctx.sessionQuery.observeSession(request.sessionId)
+      const persistence = this.ctx.get('sessionPersistence')
+      if (persistence?.sharedExecution !== undefined) {
+        const stored = await persistence.readFrom(request.sessionId, 0)
+        observed = {
+          header: stored.meta,
+          events: stored.events,
+          projections: this.ctx.sessionProjections.restore({}, stored.events, 0, stored.meta).snapshot,
+          [Symbol.dispose]: () => {},
+        }
+      } else {
+        observed = await this.ctx.sessionQuery.observeSession(request.sessionId)
+      }
     } catch (error) {
       if (error instanceof SessionQueryError
         && error.code === 'SESSION_QUERY_SESSION_NOT_FOUND') {
@@ -238,11 +257,11 @@ export class SessionCommandController {
         {},
       )
     }
-    const childId = SessionId(`session-${randomUUID()}`)
-    const composition = await this.agents.composeAgent(this.agents.presetForObservation(source))
+    const childId = reservedChildId ?? SessionId(`session-${randomUUID()}`)
+    const composition = await this.agents.composeAgent(source.projections?.values.agentPreset ?? undefined)
     try {
       const { provider, model } = this.ctx.agentDefaultModel.currentSelection()
-      await this.ctx.agents.create({
+      await this.agents.create({
         sessionId: childId,
         seed: source.events.slice(0, cut),
         meta: {
@@ -296,6 +315,15 @@ export class SessionCommandController {
     }
     const agent = await this.resolveAgent(request.sessionId)
     const selection = this.agents.selectionFor(agent).current
+    const pendingQuestion = this.ctx.get('userQuestions')?.state(agent).pending
+    if (pendingQuestion !== null && pendingQuestion !== undefined) {
+      reject('agent-busy', 'Answer or dismiss the pending question before sending another message.', { reason: 'question-pending' })
+    }
+    if (agent.session.events.some(event => event.type === 'user/message'
+      && event.data.source.kind === 'user' && 'rpcId' in event.data.source
+      && event.data.source.rpcId === request.requestId)) {
+      return { accepted: true }
+    }
     if (!routeServed(this.ctx, selection.provider)) {
       reject(
         'model-unavailable',

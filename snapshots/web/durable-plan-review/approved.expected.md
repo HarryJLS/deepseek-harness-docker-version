@@ -1,0 +1,66 @@
+- banner:
+  - navigation "Session hierarchy":
+    - 'button "Plan a small change: add" [disabled]'
+  - img
+  - text: Standard mode
+  - button "Session log":
+    - text: Session log
+    - img
+  - tablist:
+    - tab "Chat" [selected]
+    - tab "Trajectory"
+- navigation "Turn navigation":
+  - button "Jump to turn 1"
+  - button "Jump to turn 2"
+- img
+- text: plan Plan mode on. Use /plan off to leave.
+- button "System prompt":
+  - img
+  - img
+  - text: System prompt
+- text: "Plan a small change: add a --greeting flag to a CLI. Do not read or write files or delegate. Call exit_plan_mode with a short plan of at most three bullet points. After I approve, reply with the single word DURABLE_DONE and stop. {{clock}}"
+- button "Copy":
+  - img
+- button "Context injection @deepseek-ai/dsh-system-prompt":
+  - img
+  - img
+  - text: Context injection @deepseek-ai/dsh-system-prompt
+- button "Think I need to call exit_plan_mode with a short plan of at most three bullet points. Don't read/write files or delegate.":
+  - img
+  - img
+  - text: Think I need to call exit_plan_mode with a short plan of at most three bullet points. Don't read/write files or delegate.
+- 'button "Tool call exit_plan_mode · # Add a `--greeting` flag to the CLI"':
+  - img
+  - img
+  - text: "Tool call exit_plan_mode · # Add a `--greeting` flag to the CLI"
+- button "System prompt":
+  - img
+  - img
+  - text: System prompt
+- button "Thought for a while":
+  - text: Thought for a while
+  - img
+- paragraph: DURABLE_DONE
+- button "Turn usage 8.5K tok · Cache hit 3%":
+  - img
+  - img
+  - text: Turn usage 8.5K tok · Cache hit 3%
+- button "Copy":
+  - img
+- button "Good response":
+  - img
+- button "Bad response":
+  - img
+- button "Branch into a new conversation":
+  - img
+- text: {{clock}} Ran for {{duration}} TTFT {{duration}} {{throughput}} tok/s
+- textbox "Message or run a task... / commands, @ files or sessions"
+- button "Commands":
+  - img
+- 'button "Access mode, current: Workspace Write"': Workspace Write
+- button "Select model, current DeepSeek-V4-Flash":
+  - text: DeepSeek-V4-Flash
+  - img
+- button "7% of context used"
+- button "Send message" [disabled]
+- text: 2 turns · 2 steps LLM {{duration}} · Tool call {{duration}} TTFT avg {{duration}} · {{throughput}} tok/s Cache hit 2% Input 17K tok · Output 392 tok

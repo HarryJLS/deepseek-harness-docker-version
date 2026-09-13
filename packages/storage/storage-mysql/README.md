@@ -25,6 +25,8 @@ Registers the mysql storage backend over three shared database tables. Values ar
 <a id="use-this-package"></a>
 ## Use this package
 
+KV units support short transactions. A transaction locks the existing application/unit row, reads fresh records, and performs every scoped write on that connection before committing. This serializes workspace read-modify-write operations across replicas without new tables; losing the connection rolls back the metadata update.
+
 Mount this provider instead of storage-json and select `backend: mysql` on the storage domain. The backend name defaults to `mysql`, and the application name defaults to `dsh`. The [container deployment](../../../deploy/README.md) supplies connection settings from Nacos.
 
 Units remain application-owned, not user-owned. Logical unique indexes include the application name, so identical unit/table/key values in different applications remain separate. Every row has the [shared Snowflake and audit fields](../../util/mysql-schema/README.md#isolating-several-applications-in-one-database); an absent actor is `-`.

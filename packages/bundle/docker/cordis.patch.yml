@@ -123,7 +123,14 @@
     - id: session-persistence-mysql
       name: '@deepseek-ai/dsh-session-persistence-mysql'
       config: !!js |
-        ({ ...JSON.parse(process.env.DSH_DATABASE_SECRET), app: process.env.DSH_APP_NAME, redis: JSON.parse(process.env.DSH_REDIS_SECRET) })
+        (() => {
+          const { leaseMs, renewIntervalMs, pollIntervalMs } = JSON.parse(process.env.DSH_EXECUTION_CONFIG)
+          return { ...JSON.parse(process.env.DSH_DATABASE_SECRET), app: process.env.DSH_APP_NAME, redis: JSON.parse(process.env.DSH_REDIS_SECRET), execution: { leaseMs, renewIntervalMs, pollIntervalMs } }
+        })()
+
+- id: user-questions
+  config: !!js |
+    ({ durable: true, maxRequestBytes: JSON.parse(process.env.DSH_EXECUTION_CONFIG).maxQuestionBytes })
 
 # ── credentials: Nacos ─────────────────────────────────────────────────────
 #

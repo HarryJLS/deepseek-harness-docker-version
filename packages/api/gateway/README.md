@@ -26,6 +26,8 @@ WebSocket logical streams retain the user admitted on the upgrade request throug
 <a id="host-service-typertgatewayservice-ctx-key-typertgateway"></a>
 ## Host service: `TypertGatewayService` (ctx key: `typertGateway`)
 
+The `api-gateway/invoke` waterfall wraps unary dispatch before argument lookups activate process-local resources. Session Controller uses it to reserve Agent-addressed operations in shared deployments. Listeners delegate through `next()`; the Gateway still performs its ordinary descriptor and argument validation.
+
 `ctx.typertGateway.invoke()` resolves the current descriptor and Cordis Service for each call, validates exact named arguments, resolves registered object or Context identities, invokes the public business method, and validates its result. Business Services extend `TypertRemoteService` and mark methods with `@Remote` or `@RemoteScope` from [`dsh-typert-protocol`](../../typert/protocol/README.md); `bindTypertRemote()` remains available when another base class owns inheritance.
 
 Strict mode reads generated invocation descriptors from `ctx.typert.local`. Lookup parameters use the currently active resolver in `ctx.typert.lookups`: the business package registers the stable declaration and default policy, while Host composition can override resolution behavior with effect-scoped `configure()`; `@RemoteScope` resolves its receiver through a registered Host Context adapter. SRC mode is a development fallback for endpoints that have never had a strict definition; it parses simple parameter names and accepts only JSON-safe values for non-lookup parameters. Withdrawing an observed strict definition fails instead of weakening validation.

@@ -306,7 +306,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/api/session-controller/src/index.ts:69`](../packages/api/session-controller/src/index.ts)
+Source: [`packages/api/session-controller/src/index.ts:76`](../packages/api/session-controller/src/index.ts)
 
 <a id="deepseek-aidsh-api-settings-controller"></a>
 
@@ -1985,6 +1985,8 @@ Requires: `sessions`
 export interface Config extends MysqlConnectionConfig {
   /** Optional shared event cache; container deployments require this configuration from Nacos. */
   redis?: RedisSessionCacheConfig
+  /** Enable exclusive, request-scoped execution across replicas sharing these tables. */
+  execution?: SharedExecutionConfig
   /** Maximum cold Session preparations retained for history-to-resume reuse. */
   preparedSessionCacheSize?: number
   /** Fixed live-event coalescing window; not a backend completion deadline. */
@@ -2020,11 +2022,21 @@ export interface RedisSessionCacheConfig {
   /** Per-command response deadline in milliseconds. */
   commandTimeoutMs?: number
 }
+
+/** Deployment-owned execution and observation timings. */
+export interface SharedExecutionConfig {
+  /** Reservation lifetime after its most recent successful database renewal. */
+  leaseMs: number
+  /** Renewal interval; must leave at least two further renewal opportunities. */
+  renewIntervalMs: number
+  /** Committed-history and cancellation observation interval. */
+  pollIntervalMs: number
+}
 ```
 
 Depends on: [`MysqlConnectionConfig`](../packages/util/mysql-schema/src/index.ts)
 
-Source: [`packages/session/session-persistence-mysql/src/index.ts:50`](../packages/session/session-persistence-mysql/src/index.ts)
+Source: [`packages/session/session-persistence-mysql/src/index.ts:52`](../packages/session/session-persistence-mysql/src/index.ts)
 
 <a id="deepseek-aidsh-session-persistence-sqlite"></a>
 
@@ -2418,7 +2430,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/storage/storage-domain/src/index.ts:52`](../packages/storage/storage-domain/src/index.ts)
+Source: [`packages/storage/storage-domain/src/index.ts:53`](../packages/storage/storage-domain/src/index.ts)
 
 <a id="deepseek-aidsh-storage-json"></a>
 
@@ -2457,7 +2469,7 @@ export interface Config extends MysqlConnectionConfig {
 
 Depends on: [`MysqlConnectionConfig`](../packages/util/mysql-schema/src/index.ts)
 
-Source: [`packages/storage/storage-mysql/src/index.ts:51`](../packages/storage/storage-mysql/src/index.ts)
+Source: [`packages/storage/storage-mysql/src/index.ts:50`](../packages/storage/storage-mysql/src/index.ts)
 
 <a id="deepseek-aidsh-storage-sqlite"></a>
 
@@ -3384,6 +3396,22 @@ export type ApprovalPolicy = 'ask' | 'never'
 
 Source: [`packages/interaction/user-approval/src/index.ts:142`](../packages/interaction/user-approval/src/index.ts)
 
+<a id="deepseek-aidsh-user-questions"></a>
+
+## `@deepseek-ai/dsh-user-questions`
+
+```ts config-catalog
+/** Human-question delivery and retained payload limits. */
+export interface Config {
+  /** End the requesting turn and accept a later, independently routed decision. */
+  durable?: boolean
+  /** Maximum UTF-8 bytes in a durable question batch or answer. */
+  maxRequestBytes?: number
+}
+```
+
+Source: [`packages/interaction/user-questions/src/index.ts:41`](../packages/interaction/user-questions/src/index.ts)
+
 <a id="deepseek-aidsh-web"></a>
 
 ## `@deepseek-ai/dsh-web`
@@ -3660,7 +3688,6 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-tool-call-timeout-policy` — requires `tools` ([`packages/guard/timeout-policy/src/index.ts`](../packages/guard/timeout-policy/src/index.ts))
 - `@deepseek-ai/dsh-tool-cordis` — requires `tools` · `systemPrompt` · `dynamicCordisRunner` · `cordisInspect` ([`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts))
 - `@deepseek-ai/dsh-tool-subagent-control` — requires `tools` · `subagents` ([`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts))
-- `@deepseek-ai/dsh-user-questions` ([`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts))
 - `@deepseek-ai/dsh-webhook` — requires `agents` · `agentDefaultModel` · `agentPresets` · `permissionPresets` · `sessionTitle` · `workspaceRegistry` ([`packages/webhook/webhook/src/index.ts`](../packages/webhook/webhook/src/index.ts))
 - `@deepseek-ai/dsh-workspace` — requires `storageDomain` · `sessionPersistence` ([`packages/workspace/workspace/src/index.ts`](../packages/workspace/workspace/src/index.ts))
 

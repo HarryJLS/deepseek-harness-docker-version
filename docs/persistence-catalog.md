@@ -501,7 +501,7 @@ Source: [`packages/llm/llm-retry/src/types.ts:11`](../packages/llm/llm-retry/src
 'model/selection': ModelSelection
 ```
 
-Source: [`packages/api/session-controller/src/types.ts:40`](../packages/api/session-controller/src/types.ts)
+Source: [`packages/api/session-controller/src/types.ts:55`](../packages/api/session-controller/src/types.ts)
 
 ### `permission/*`
 
@@ -1039,6 +1039,19 @@ Source: [`packages/core/session/src/types.ts:232`](../packages/core/session/src/
 ```
 
 Source: [`packages/core/session/src/types.ts:253`](../packages/core/session/src/types.ts)
+
+### `user-questions/*`
+
+<a id="user-questionsstate--log-only"></a>
+
+#### `user-questions/state` — log-only
+
+```ts persistence-catalog
+/** Complete durable question state; a pending request does not retain a running turn. */
+'user-questions/state': UserQuestionState
+```
+
+Source: [`packages/interaction/user-questions/src/types.ts:48`](../packages/interaction/user-questions/src/types.ts)
 
 ### `web/*`
 

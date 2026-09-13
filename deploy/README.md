@@ -15,6 +15,7 @@ The root [Dockerfile](../Dockerfile) builds the Web application. OceanBase in My
 
 - [Database Configuration](#database-configuration)
 - [Redis Cache](#redis-cache)
+- [Shared Confirmation](#shared-confirmation)
 - [Temporary Files](#temporary-files)
 - [User Isolation](#user-isolation)
 - [Schema](#schema)
@@ -52,6 +53,11 @@ deployment:
     commandTimeoutMs: 2000
   attachments:
     temporaryRoot: tmp/dsh-attachments
+  execution:
+    leaseMs: 30000
+    renewIntervalMs: 5000
+    pollIntervalMs: 500
+    maxQuestionBytes: 65536
 ```
 
 These credentials are for the supplied local development stack. Use a dedicated database account for production. All fields in this example are required when using individual connection fields. A missing entry, unreachable Nacos server, invalid field, or incomplete database configuration stops startup before the application opens a pool. Database changes take effect after a container restart.
@@ -75,6 +81,19 @@ dsh-<app>:db:<database>:user:<user>:session:<session>:{<row-hash>}:event:<seq>:p
 Each Redis string is at most `maxChunkBytes`, including its JSON wrapper. Large events are split into checksummed byte chunks; pipeline size is bounded by `batchSize`. Events larger than `maxEventBytes` remain complete in MySQL and bypass Redis. There is no growing per-user or per-session list, hash, or whole-conversation value. Each accessed or written key receives `ttlSeconds`, default 172800 seconds (2 days); expiration does not delete database history.
 
 MySQL commits before cache publication. Every read checks the database's user ownership and log extent, then reads the event pages from Redis. Expired, missing, malformed, or partially evicted pages reload from MySQL and refill Redis. Runtime Redis failures also use MySQL; startup still requires the configured Redis server. The supplied development Redis disables snapshots and AOF, limits memory to 256 MiB, and uses `allkeys-lru`; losing the complete cache is recoverable.
+
+<a id="shared-confirmation"></a>
+## Shared Confirmation
+
+The Docker profile enables durable questions and plan reviews. A submitted question is recorded in the existing session event JSON, and the requesting turn ends. The original Web card submits its session, question identity, version, and decision as a new request. Any replica can load the committed context and continue. Matching retries do not start another completed continuation; a stale version or conflicting answer is rejected.
+
+`deployment.execution` in the same Nacos document owns the timings and question limit shown above. A renewable reservation uses small rows in the existing `dsh_kv_record` table. No approval table or session column is added. Database time determines expiry, and every session write verifies ownership in its transaction. Redis eviction cannot remove this protection. An operation keeps the reservation until its agent and writes finish; another mutation during that interval reports busy. Cancellation can enter another replica. History streams poll committed events, so they do not depend on the executing replica's memory.
+
+Every concurrent replica sharing the tables still requires its own Nacos-configured `deployment.database.snowflakeWorkerId`. Shared files require the same NAS mount and relative directory on all replicas; replace Compose's attachment tmpfs with that mount. Database history and pending cards survive file cleanup, but deleted file contents and previews cannot be recovered from the context cache.
+
+Replicas serving the same active sessions run the same durable-confirmation build and Nacos policy. Workspace metadata refreshes through short database transactions, including newly created workspaces and simultaneous session attachments.
+
+This mode supports sequential top-level Web session work with `exit_plan_mode` and `ask_user_question`. It does not serialize live permission-approval callbacks, running terminals, delegated jobs, or arbitrary plugin resources. A crash during an external side effect does not prove whether that effect completed; uploads and business APIs need their own idempotency keys, and unfinished side effects are not automatically replayed.
 
 <a id="temporary-files"></a>
 ## Temporary Files
@@ -150,5 +169,5 @@ The application owns its Nacos namespace; `appName` separates its database rows 
 
 - Nacos settings and credentials contain secrets. Restrict their namespace and enable server authentication for non-development deployments.
 - Source-embedded example Nacos credentials are not a secret-management mechanism. A production credential must be provided through a deployment-specific secure build or an approved secret-injection design.
-- Session context is shared through Redis and MySQL, but live Agents, inboxes, streams, and jobs remain process-local. The gateway must keep an active session on its owning process; this cache is not distributed execution, a writer lease, or a multi-tenant shell sandbox. Stop the old owner before resuming on another node.
+- Shared confirmation does not transfer arbitrary running plugin resources or provide a multi-tenant shell sandbox. See [Shared Confirmation](#shared-confirmation) for execution, file-sharing, and external-side-effect limits.
 - The original database and configuration backups must be retained until the new deployment and rollback procedure are verified.

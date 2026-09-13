@@ -18,6 +18,17 @@ export interface InvokeRemoteRequest {
   readonly signal?: AbortSignal
 }
 
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Wrap a unary invocation before resolving process-local argument identities.
+     * @param request - decoded wire request.
+     * @mode waterfall
+     */
+    'api-gateway/invoke'(request: InvokeRemoteRequest, next: () => Promise<unknown>): Promise<unknown>
+  }
+}
+
 /** One Host Cordis notification forwarded unchanged to Client Remote subscribers. */
 export interface TypertRemoteEventFrame {
   /** Target user for session notifications; absent for Host-wide configuration events. */

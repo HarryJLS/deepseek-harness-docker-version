@@ -9,6 +9,8 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { SessionPreparation } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionId, SessionHeader } from '@deepseek-ai/dsh-session'
 import type { SessionPersistenceRevision } from './revision.ts'
+import type { SharedSessionExecution } from './execution.ts'
+export type { SessionExecutionLease, SharedSessionExecution } from './execution.ts'
 
 // Re-export the metadata vocabulary so Consumers import it from the Service Definition.
 export type { SessionHeader } from '@deepseek-ai/dsh-session'
@@ -103,6 +105,9 @@ export interface SessionLocation {
  * rewriting committed events.
  */
 export abstract class SessionPersistence extends Service {
+  /** Shared execution support, absent for process-local backends. */
+  readonly sharedExecution: SharedSessionExecution | undefined = undefined
+
   constructor(ctx: Context) {
     super(ctx, 'sessionPersistence')
   }

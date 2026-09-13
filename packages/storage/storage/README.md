@@ -25,6 +25,8 @@ Mount `dsh-storage` to give a composition durable, non-session storage: it is th
 <a id="use-this-package"></a>
 ## Use this package
 
+A KV backend can implement the optional `KvUnit.transaction()` operation for short shared metadata updates. Its callback uses a transaction-scoped unit; all writes commit together after the callback succeeds, and failures roll them back. Domain consumers reach it through [atomic domain updates](../storage-domain/README.md).
+
 Use this package to give a composition durable, non-session storage: mount it together with backend and domain-form packages, and host-side packages read and write validated records through `ctx.storageDomain`. The hub itself adds nothing observable — it is the meeting point that makes the family work, and everything below is what a composition gets from it.
 
 ### When to use it

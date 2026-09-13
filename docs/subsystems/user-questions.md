@@ -8,6 +8,8 @@ Source: [`packages/interaction/user-questions/src/index.ts`](../../packages/inte
 
 ## Question options
 
+Durable delivery uses `UserQuestionState` from [the type-only declarations](../../packages/interaction/user-questions/src/types.ts). It records the complete pending batch, its unique `UserQuestionId`, tool-call reference, and event-sequence version. A decision records the same identity/version, its answer or dismissal, plan-approval fact, and continuation `MessageId`. The `userQuestions` projection reconstructs this state; the Web client submits decisions through Session Controller rather than answering a live callback. [Deployment configuration](../../deploy/README.md#shared-confirmation) owns shared execution and file-retention policy.
+
 `AskUserQuestionOption` contains one selectable choice. `label` is the user-facing option text and also the model-facing selected value; `description` is optional UI help text.
 
 ```ts type-equiv
@@ -131,6 +133,32 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ```ts cordis-catalog
 /**
+ * Read question state from the exact agent's session log.
+ * @param agent - agent whose question state is requested.
+ * @returns the current pending request and most recent decision.
+ */
+state(agent: Agent): UserQuestionState
+
+/**
+ * Request human input for a model tool call.
+ * @param request - question batch and its live caller.
+ * @param callId - exact tool call requesting the answer.
+ * @returns an immediate human answer in live mode, or undefined after recording a durable request.
+ */
+async request(request: AskUserQuestionRequest, callId: ToolCallId): Promise<AskUserQuestionAnswer | undefined>
+
+/**
+ * Record a version-matched answer and wake a new turn.
+ * The caller must hold the shared session execution lease when deployed across replicas.
+ * @param agent - freshly resumed, exclusively owned agent.
+ * @param id - durable request identity shown on the card.
+ * @param version - request event sequence shown on the card.
+ * @param answer - complete answer, or null to dismiss the card without starting work.
+ * @returns whether a new decision was recorded; identical retries return false.
+ */
+decide(agent: Agent, id: UserQuestionId, version: number, answer: AskUserQuestionAnswer | null): boolean
+
+/**
  * Ask the scoped answerer waterfall and wait for the user's answer.
  *
  * When a caller supplies an agent, human interaction is valid only for the
@@ -148,6 +176,8 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
  */
 async ask(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer>
 ```
+
+Types: [Agent](core.md) · [ToolCallId](llm-streaming.md)
 
 Source: [`packages/interaction/user-questions/src/index.ts`](../../packages/interaction/user-questions/src/index.ts)
 

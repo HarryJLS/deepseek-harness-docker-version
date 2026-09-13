@@ -35,6 +35,8 @@ The [shared schema helpers](../../util/mysql-schema/README.md) define audit fiel
 
 MySQL commits each batch before Redis receives it. Cache misses, incomplete chunks, checksum failures, and runtime Redis failures read the affected page from MySQL without truncating history. Startup fails when a configured Redis server cannot connect. Every read still validates the database header and log extent; Redis does not grant access or make a database outage transparent.
 
+The optional `execution` configuration supplies `sharedExecution` for request-scoped Web work. It uses the existing KV record table for renewable, database-timed reservations and fences event writes in the same transaction. [Shared confirmation](../../../deploy/README.md#shared-confirmation) documents Nacos timings, replica identity, NAS, and supported workflows.
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -45,7 +47,7 @@ MySQL commits each batch before Redis receives it. Cache misses, incomplete chun
 
 The coordinator owns buffering, preparation reuse, live adoption, repair sequencing, and shutdown quiescence. Header materialization and the first event batch commit together; a repair appends its closers in one transaction. Row-per-event transactions cannot produce a torn JSONL tail. Revision tokens include the database and application names. Recovery reads 1,000 events per keyset page, then returns the complete logical log.
 
-Redis stores separate immutable event values, splitting oversized values into checksummed byte chunks. Every key has a sliding TTL, and physical database row identity separates recreated sessions from old cache entries. A SQL row lock and contiguous sequence check reject competing write batches. Existing live Agents still need one execution owner.
+Redis stores separate immutable event values, splitting oversized values into checksummed byte chunks. Every key has a sliding TTL, and physical database row identity separates recreated sessions from old cache entries. A SQL row lock and contiguous sequence check reject competing write batches. With `execution` configured, an expired or superseded reservation also rejects the transaction.
 
 </details>
 
@@ -78,7 +80,7 @@ Unchanged logical history reconstructs the same request prefix.
 
 - There is no raw per-session artifact: locate returns nothing and supportsRawArtifacts is false.
 - Paging bounds individual database results, not the complete in-memory history.
-- Redis expiration does not delete database history. Distributed Agent execution and routing are not implemented by this provider; route a live session to its owning process.
+- Redis expiration does not delete database history. Shared execution requires the existing KV table and an API owner that acquires and releases reservations; it does not transfer arbitrary live plugin resources.
 
 <a id="dev-note"></a>
 ### Dev Note

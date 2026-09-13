@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-用户交互 Service Definition。它定义 `ctx.userQuestions`，供面向模型的工具或权限插件在需要暂停工作并询问人类决定时使用。当消费方必须暂停操作并等待用户回答时，请使用它。
+通过 `ctx.userQuestions` 向用户请求决定。实时交付等待回答者；持久化交付记录问题，让提问工具结束本轮，并接受之后从会话历史恢复的决定。
 
 ## 目录
 
@@ -26,7 +26,10 @@ kind: "package-reference"
 
 ### 公开 API
 
+设置 `durable: true` 启用工具问题记录，默认为 false。`maxRequestBytes` 默认将持久化问题或回答限制为 65,536 个 UTF-8 字节。Docker 配置档从 [Nacos 部署配置](../../../deploy/README.zh.md#shared-confirmation) 取得这些选项。
+
 - `ctx.userQuestions.ask(request): Promise<AskUserQuestionAnswer>` 派发回答者 waterfall，并等待第一个接受请求的回答。
+- `ctx.userQuestions.request(request, callId)` 使用配置的交付模式。持久化请求在未获回答时返回，Consumer 据此结束本轮；`decide()` 校验已保存标识与版本，并在调用方持有共享执行权时记录新输入。
 
 ### 关键类型
 
@@ -47,7 +50,7 @@ kind: "package-reference"
 <a id="role"></a>
 ## 职责
 
-这是 Service Definition 包。`@deepseek-ai/dsh-tool-ask-user` 等 Consumer 依赖此服务；Web Client 通过 Remote Events 贡献带 Agent scope 的回答者。循环保持不变：工具调用等待 waterfall 结果，该结果随后恢复正常的 agent loop（智能体循环）。
+`@deepseek-ai/dsh-tool-ask-user` 等 Consumer 使用此服务；Web Client 通过 Remote Events 提供实时回答，或通过 Session Controller 提交持久化决定。待回答的持久化问题阻止进一步工具执行和模型步骤，直到被回答或关闭。循环已有的本轮结束机制负责结束提问轮次。
 
 <a id="model-experience"></a>
 ## 模型体验

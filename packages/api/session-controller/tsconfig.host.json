@@ -13,6 +13,7 @@
     "src/agent.ts",
     "src/catalog.ts",
     "src/commands.ts",
+    "src/execution.ts",
     "src/control.ts",
     "src/file-references.ts",
     "src/history.ts",
@@ -21,6 +22,8 @@
     "src/skill-catalog.ts"
   ],
   "references": [
+    { "path": "../../interaction/user-questions" },
+    { "path": "../gateway/tsconfig.host.json" },
     {
       "path": "../../../vendor/cordis"
     },

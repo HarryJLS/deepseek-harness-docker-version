@@ -25,6 +25,8 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用此包
 
+KV 单元支持短事务：锁定既有应用与单元记录，读取最新数据，并在同一连接上完成所有事务级写入后提交。这无需新表即可跨副本串行化工作区的读改写；连接丢失会回滚元数据更新。
+
 用此提供方替代 storage-json，并将存储域设为 `backend: mysql`。后端名默认为 `mysql`，应用名默认为 `dsh`。[容器部署](../../../deploy/README.zh.md) 从 Nacos 提供连接设置。
 
 单元归应用所有，不按用户分拆。逻辑唯一索引包含应用名，因此不同应用的相同单元、表和键不会合并。每行都有[共享的雪花主键和审计字段](../../util/mysql-schema/README.zh.md#isolating-several-applications-in-one-database)，缺失操作人时使用 `-`。

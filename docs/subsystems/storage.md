@@ -25,6 +25,8 @@ interface StorageForms {}
 
 ## The backend contract
 
+The optional `KvUnit.transaction()` runs a short callback against a transaction-scoped unit. MySQL locks the existing application/unit row and commits scoped reads and writes together. `Domain.atomic()` validates a fresh snapshot inside that transaction, isolates mutations from the original cache, and publishes final values only after commit. Consumers must use the supplied domain handle and await all writes; unsupported backends reject atomic updates.
+
 ```ts type-equiv
 /**
  * One registered backend. A backend owns exactly one medium and shares its
@@ -79,6 +81,15 @@ interface DomainSpec {
 ```ts type-equiv
 /** One open domain, typed by its spec. */
 interface Domain<S extends DomainSpec> {
+  /**
+   * Refresh and update a shared domain in one backend transaction.
+   * The callback must use its scoped handle and await every write. Observers
+   * receive only final committed values; failure leaves the original cache unchanged.
+   * @param operation - short metadata operation over the fresh transaction snapshot.
+   * @returns its result after commit and cache publication.
+   */
+  atomic<T>(operation: (domain: Domain<S>) => Promise<T>): Promise<T>
+
   /** Domain name from the spec. */
   readonly name: string
   /** Global singleton handle; a spec without `global` has no usable handle (`never`). */

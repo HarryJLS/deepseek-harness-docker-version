@@ -319,6 +319,7 @@ export class SessionManager {
       ? undefined
       : this.catalogs.get(address.parentSessionId)?.parentAvailable
     return new Session(sessionId, this.remote, {
+      onRunning: (session, running) => { this.handleSessionStatus(session.sessionId, running) },
       ...(address === undefined ? {} : {
         address,
         ...catalogAvailability(parentAvailable),

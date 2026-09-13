@@ -32,7 +32,7 @@ The [user-ownership decision](2026-09-06-oceanbase-user-ownership.md) continues 
 
 ## Consequences
 
-Redis stores rebuildable context, not live Agent ownership. Active Agents, inboxes, jobs, and streams remain process-local, so gateway session affinity and stopping the former owner are required before cross-node execution resumes. SQL locks reject overlapping event sequences but are not distributed execution leases. Cold recovery still allocates the complete logical session in the executing process.
+Redis stores rebuildable context, not live Agent ownership. The [durable Web confirmation decision](2026-09-13-durable-web-confirmation.md) owns request-scoped execution reservations and confirmation recovery; those protections use the database rather than the evictable cache. Cold recovery still allocates the complete logical session in the executing process.
 
 Temporary image previews can become unavailable, and cleanup during an already-started request can fail that request. Redis TTL does not delete SQL history or clean files. Redis policy and connection changes apply on process restart. Existing SQL attachment rows are left untouched.
 

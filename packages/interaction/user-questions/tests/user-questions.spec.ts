@@ -37,6 +37,14 @@ function stubAgent(id: string, delegationDepth = 0): Agent {
 }
 
 describe('UserQuestionService', () => {
+  it('uses the live defaults when constructed without Loader configuration', async () => {
+    const ctx = new Context()
+    const service = new UserQuestionService(ctx)
+    expect(service.durable).toBe(false)
+    await expect(service.ask({ questions: [{ id: 'q', question: 'Continue?' }] }))
+      .rejects.toMatchObject({ code: 'NO_PROVIDER' })
+    await ctx.fiber.dispose()
+  })
   it('delegates ask requests to the registered provider', async () => {
     const ctx = new Context()
     await ctx.plugin(UserQuestionService)

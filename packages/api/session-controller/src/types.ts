@@ -9,6 +9,21 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { ChunkRow } from '@deepseek-ai/dsh-session/chunk-rows'
 import type { JsonValue, SessionHeader, SessionId, SurfaceOp } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
+import type { AskUserQuestionAnswer, UserQuestionId } from '@deepseek-ai/dsh-user-questions/types'
+
+/** A decision addressed to a persisted question, not a live browser callback. */
+export interface SessionQuestionDecisionRequest {
+  readonly sessionId: SessionId
+  readonly id: UserQuestionId
+  readonly version: number
+  readonly answer: AskUserQuestionAnswer | null
+}
+
+/** Durable acknowledgement; repeated identical decisions do not execute again. */
+export interface SessionQuestionDecisionValue {
+  readonly accepted: true
+  readonly duplicate: boolean
+}
 import type { JobId } from '@deepseek-ai/dsh-jobs/brand'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 
@@ -457,6 +472,11 @@ export type SessionFollowFrame =
     readonly cursor: number
     readonly records: readonly SessionHistoryRecord[]
     readonly hasMore: boolean
+    readonly projections: SessionProjectionBaseline
+  }
+  | {
+    readonly type: 'state'
+    readonly running: boolean
     readonly projections: SessionProjectionBaseline
   }
   | SessionEventEntry

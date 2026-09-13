@@ -14,6 +14,7 @@ import type { KvUnit } from '@deepseek-ai/dsh-storage'
 import { DomainError } from './error.ts'
 import type { DomainSpec, DomainGlobalSpec, TableKeyOf, TableValueOf } from './spec.ts'
 import type { DomainChanged } from './events.ts'
+import { loadDomainSnapshot } from './snapshot.ts'
 
 /** Handle on a domain's global singleton. */
 export interface DomainGlobal<G> {
@@ -95,6 +96,15 @@ export type DomainGlobalHandleOf<S extends DomainSpec> =
 
 /** One open domain, typed by its spec. */
 export interface Domain<S extends DomainSpec> {
+  /**
+   * Refresh and update a shared domain in one backend transaction.
+   * The callback must use its scoped handle and await every write. Observers
+   * receive only final committed values; failure leaves the original cache unchanged.
+   * @param operation - short metadata operation over the fresh transaction snapshot.
+   * @returns its result after commit and cache publication.
+   */
+  atomic<T>(operation: (domain: Domain<S>) => Promise<T>): Promise<T>
+
   /** Domain name from the spec. */
   readonly name: string
   /** Global singleton handle; a spec without `global` has no usable handle (`never`). */
@@ -164,14 +174,16 @@ export class DomainImpl {
    * when the medium held none; `undefined` when the spec declares no global.
    * @param onClosed - Facility hook run once after teardown completes; frees
    * the domain name for a later open.
+   * @param changed - private transaction sink; ordinary domains publish through Cordis.
    */
   constructor(
     private readonly ctx: Context,
-    spec: DomainSpec,
+    private readonly spec: DomainSpec,
     private readonly unit: KvUnit,
     records: Map<string, Map<string, unknown>>,
     globalValue: unknown,
     private readonly onClosed: () => void,
+    private readonly changed?: (change: DomainChanged) => void,
   ) {
     this.name = spec.name
     const host: TableHost = {
@@ -223,6 +235,48 @@ export class DomainImpl {
   }
 
   /**
+   * Refresh and mutate an isolated domain, publishing only its committed final values.
+   * @param operation - callback using the transaction-scoped domain only.
+   * @returns the callback result after the backend commits.
+   */
+  atomic<T>(operation: (domain: DomainImpl) => Promise<T>): Promise<T> {
+    return this.enqueue(async () => {
+      if (this.unit.transaction === undefined) {
+        throw new DomainError('facet-unsupported', `domain '${this.name}' requires a transactional backend`)
+      }
+      let staged: DomainImpl | undefined
+      const result = await this.unit.transaction(async (unit) => {
+        const snapshot = await loadDomainSnapshot(this.spec, unit)
+        const local = new DomainImpl(this.ctx, this.spec, unit, snapshot.tables, snapshot.globalValue, noop, noop)
+        staged = local
+        try { return await operation(local) }
+        finally { await local.close() }
+      })
+      // The callback publishes its staged instance before it can return a result.
+      if (staged === undefined) throw new Error('domain transaction returned without a snapshot')
+      const changes: DomainChanged[] = []
+      for (const [name, table] of this.tables) {
+        const fresh = staged.tables.get(name) as KvTableImpl<string, unknown>
+        for (const key of table.rawKeys()) {
+          if (!fresh.hasRaw(key)) changes.push({ domain: this.name, table: name, key, operation: 'deleted' })
+        }
+        for (const [key, value] of fresh.rawEntries()) {
+          if (JSON.stringify(table.raw(key)) !== JSON.stringify(value)) {
+            changes.push({ domain: this.name, table: name, key, operation: 'put', value })
+          }
+        }
+        table.replace(fresh.rawEntries())
+      }
+      if (JSON.stringify(this.globalValue) !== JSON.stringify(staged.globalValue)) {
+        this.globalValue = staged.globalValue
+        changes.push({ domain: this.name, table: '', key: '', operation: 'put', value: this.globalValue })
+      }
+      for (const change of changes) this.emitChanged(change)
+      return result
+    })
+  }
+
+  /**
    * Close this domain: reject new writes immediately, drain already-queued
    * writes (their events still emit), close the unit, then free the name via
    * the facility hook. Idempotent — repeated calls share one teardown.
@@ -249,6 +303,10 @@ export class DomainImpl {
    * the new state), so a throwing listener must not retroactively reject it.
    */
   private emitChanged(change: DomainChanged): void {
+    if (this.changed !== undefined) {
+      this.changed(change)
+      return
+    }
     try {
       this.ctx.emit('domain/changed', change)
     } catch (error) {
@@ -283,6 +341,15 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
     private readonly tableName: string,
     private readonly records: Map<string, unknown>,
   ) {}
+
+  raw(key: string): unknown { return this.records.get(key) }
+  hasRaw(key: string): boolean { return this.records.has(key) }
+  rawKeys(): IterableIterator<string> { return this.records.keys() }
+  rawEntries(): IterableIterator<[string, unknown]> { return this.records.entries() }
+  replace(entries: Iterable<[string, unknown]>): void {
+    this.records.clear()
+    for (const [key, value] of entries) this.records.set(key, value)
+  }
 
   get(key: K): V | undefined {
     this.host.assertReadable()

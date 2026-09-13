@@ -58,6 +58,8 @@ You can attach images to a `/plan` message, and they are included with your inst
 
 ### The reviewed exit
 
+With durable questions enabled, the tool records the review and ends the turn with `{ approved: false, pending: true }`. Approval arrives as a new request, records the decision, leaves plan mode, and starts the continuation. Rejection keeps planning; dismissal returns the composer without running a model. The same card and buttons serve both delivery modes.
+
 When the agent has a finished plan, it calls `exit_plan_mode` with the plan written as markdown and starting with a heading. You review that exact plan and choose `Approve` to leave plan mode, or `Keep planning` to send the agent back with feedback.
 
 Choosing `Keep planning` (optionally with free-text feedback) sends the agent back to revise the plan; closing the review to type a message instead tells the agent to wait for your next message. If no interactive review is available, `exit_plan_mode` cannot run and you can still leave plan mode with `/plan off`.
@@ -82,7 +84,7 @@ Plan mode is a product package, not a capability seam: there is no swappable bac
 
 ### Durable state and step-boundary appends
 
-The package persists one log-only whole-value event, `plan/mode`, and the last logged value is the state. A mode change appends immediately when no turn is open; during an open turn it stays pending until the next accepted in-turn pre-step — the only append point while an agent runs — and an append failure cannot block the turn. The `set`/`get`/`foldPlanMode` helpers and their exact return states live in [`src/index.ts`](src/index.ts).
+The package folds `plan/mode` events and approved durable question decisions. A mode change appends immediately when no turn is open; during an open turn it stays pending until the next accepted in-turn pre-step, and an append failure cannot block the turn. The `set`/`get`/`foldPlanMode` helpers and their exact return states live in [`src/index.ts`](src/index.ts).
 
 ### The `/plan` command
 
@@ -163,7 +165,7 @@ The user block is append-only conversation growth. Entering or leaving plan mode
 
 #### What the model sees
 
-The [`exit_plan_mode` schema](../../../docs/tool-catalog.md#deepseek-aidsh-plan-mode) remains available in both states; execution outside plan mode fails, while an approved in-mode review returns the canonical `{ approved: true }` value and renders the existing confirmation text. Rejection remains a failed call carrying review feedback, and a dismissed review a failed call naming the user's takeover.
+Durable delivery renders `The plan is awaiting the user's review. Stop here; do not execute it until the user approves.` The next turn receives the recorded decision as a logged notice. The live-delivery exchange below applies when durable questions are disabled. The [`exit_plan_mode` schema](../../../docs/tool-catalog.md#deepseek-aidsh-plan-mode) remains available in both states; execution outside plan mode fails, while an approved in-mode review returns the canonical `{ approved: true }` value and renders the existing confirmation text. Rejection remains a failed call carrying review feedback, and a dismissed review a failed call naming the user's takeover.
 
 #### Token effect
 

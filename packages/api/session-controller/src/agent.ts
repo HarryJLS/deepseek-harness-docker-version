@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type {
-  Agent, AgentOptions, AgentSetup, ModelSelection as AgentModelSelection, ModelSelectionRef,
+  Agent, AgentHandle, AgentOptions, AgentSetup, CreateAgentOptions, ModelSelection as AgentModelSelection, ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
@@ -150,6 +150,32 @@ export class ApiSessionAgentController {
   private readonly creations = new Map<SessionId, Promise<Agent>>()
   private readonly selections = new WeakMap<Agent, InstalledSelection>()
   private readonly imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
+  private readonly handles = new Map<SessionId, AgentHandle>()
+
+  /**
+   * Release an agent created by this API after its request-scoped work is flushed.
+   * @param sessionId - exact session lifecycle owned by this controller.
+   */
+  async release(sessionId: SessionId): Promise<void> {
+    const handle = this.handles.get(sessionId)
+    if (handle === undefined) return
+    try { await handle.dispose() }
+    finally { this.handles.delete(sessionId) }
+  }
+
+  private own(handle: AgentHandle): Agent {
+    this.handles.set(handle.agent.id, handle)
+    return handle.agent
+  }
+
+  /**
+   * Create an API-owned agent whose handle can be released after shared execution.
+   * @param options - new identity, seed, metadata, and composition.
+   * @returns the published agent.
+   */
+  async create(options: CreateAgentOptions): Promise<Agent> {
+    return this.own(await this.ctx.agents.create(options))
+  }
 
   /** @param ctx - Host context carrying Agent, model, persistence, and Typert services. */
   constructor(private readonly ctx: Context) {
@@ -192,6 +218,13 @@ export class ApiSessionAgentController {
     sessionId: SessionId,
     observation?: SessionObservation,
   ): Promise<ApiSessionAgentResult> {
+    const execution = this.ctx.get('sessionPersistence')?.sharedExecution
+    if (execution !== undefined && !execution.owns(sessionId)) {
+      return { error: {
+        code: 'agent-busy', message: 'Session activation requires exclusive execution.',
+        details: { reason: 'no shared execution reservation' },
+      } }
+    }
     const live = this.liveAgent(sessionId)
     if (live !== undefined) return live
     const attached = this.ctx.sessions.get(sessionId)
@@ -450,11 +483,11 @@ export class ApiSessionAgentController {
     if (published !== undefined && hasApiSessionSubagentOwner(this.ctx, published, live)) {
       throw new ApiSessionSubagentOwnership(sessionId)
     }
-    return (await this.ctx.agents.resume({
+    return this.own(await this.ctx.agents.resume({
       resumeSessionId: sessionId,
       agentOptions: this.agentOptions(),
       setup: composition.setup,
-    })).agent
+    }))
   }
 
   private async createOrAdopt(
@@ -485,11 +518,11 @@ export class ApiSessionAgentController {
         const storedPreset = this.presetForObservation(observation)
         this.assertPresetUnchanged(sessionId, presetId, storedPreset)
         const composition = await this.composeAgent(storedPreset)
-        return (await this.ctx.agents.resume({
+        return this.own(await this.ctx.agents.resume({
           resumeSessionId: sessionId,
           agentOptions: this.agentOptions(),
           setup: composition.setup,
-        })).agent
+        }))
       } catch (error: unknown) {
         if (!(error instanceof SessionQueryError)
           || error.code !== 'SESSION_QUERY_SESSION_NOT_FOUND') throw error
@@ -503,7 +536,7 @@ export class ApiSessionAgentController {
     }
     const composition = await this.composeAgent(presetId)
     const userId = requestUserId()
-    return (await this.ctx.agents.create({
+    return this.create({
       sessionId,
       agentOptions: this.agentOptions(),
       meta: {
@@ -512,7 +545,7 @@ export class ApiSessionAgentController {
         ...(composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset }),
       },
       setup: composition.setup,
-    })).agent
+    })
   }
 
   private agentOptions(): AgentOptions {

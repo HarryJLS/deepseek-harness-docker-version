@@ -36,12 +36,14 @@ import {
   resolveMysqlApp,
   resolveMysqlDatabase,
   resolveMysqlPool,
+  mysqlIdGenerator,
 } from '@deepseek-ai/dsh-mysql-schema'
 import type { MysqlConnectionConfig } from '@deepseek-ai/dsh-mysql-schema'
 import { canAccessUser } from '@deepseek-ai/dsh-user-context'
 import { MysqlSessionStore } from './store.ts'
 import { RedisSessionCache } from './redis-cache.ts'
 import { RedisSessionCacheConfig, resolveRedisSessionCacheConfig } from './redis-config.ts'
+import { MysqlSessionExecution, SharedExecutionConfig } from './execution.ts'
 
 export { MYSQL_SESSION_READ_PAGE_SIZE, MysqlSessionStore } from './store.ts'
 export { RedisSessionCacheConfig, resolveRedisSessionCacheConfig } from './redis-config.ts'
@@ -50,6 +52,8 @@ export { RedisSessionCacheConfig, resolveRedisSessionCacheConfig } from './redis
 export interface Config extends MysqlConnectionConfig {
   /** Optional shared event cache; container deployments require this configuration from Nacos. */
   redis?: RedisSessionCacheConfig
+  /** Enable exclusive, request-scoped execution across replicas sharing these tables. */
+  execution?: SharedExecutionConfig
   /** Maximum cold Session preparations retained for history-to-resume reuse. */
   preparedSessionCacheSize?: number
   /** Fixed live-event coalescing window; not a backend completion deadline. */
@@ -60,6 +64,7 @@ export interface Config extends MysqlConnectionConfig {
 export class MysqlSessionPersistence extends SessionPersistence {
   override readonly supportsRawArtifacts = false
   override readonly name = 'session-persistence-mysql'
+  override readonly sharedExecution: MysqlSessionExecution | undefined
 
   static inject = ['sessions']
 
@@ -67,6 +72,7 @@ export class MysqlSessionPersistence extends SessionPersistence {
     ...mysqlConnectionSchema,
     // Unlike object schemas, a union does not implicitly construct an omitted Redis config.
     redis: z.union([RedisSessionCacheConfig]),
+    execution: z.union([SharedExecutionConfig]),
     preparedSessionCacheSize: z.number().step(1).min(1).default(DEFAULT_PREPARED_SESSION_CACHE_SIZE),
     writeBatchMaxDelayMs: z.number().step(1).min(1).max(MAX_WRITE_BATCH_DELAY_MS)
       .default(DEFAULT_WRITE_BATCH_MAX_DELAY_MS),
@@ -89,12 +95,17 @@ export class MysqlSessionPersistence extends SessionPersistence {
       database,
       (message) => { this.ctx.logger.warn(message) },
     )
+    const pool = mysql.createPool(resolveMysqlPool(config))
+    this.sharedExecution = config.execution === undefined ? undefined : new MysqlSessionExecution(
+      pool, app, mysqlIdGenerator(config.snowflakeWorkerId ?? 0), config.execution,
+    )
     this.store = new MysqlSessionStore(
-      mysql.createPool(resolveMysqlPool(config)),
+      pool,
       app,
       database,
       config.snowflakeWorkerId ?? 0,
       this.cache,
+      this.sharedExecution,
     )
     this.coordinator = new PersistenceCoordinator(this.ctx, this.store, {
       preparedSessionCacheSize: config.preparedSessionCacheSize ?? DEFAULT_PREPARED_SESSION_CACHE_SIZE,
@@ -105,6 +116,7 @@ export class MysqlSessionPersistence extends SessionPersistence {
   /** Validate database tables and require the configured Redis connection before readiness. */
   protected async [Service.init](): Promise<void> {
     await this.store.migrate()
+    await this.sharedExecution?.init()
     await this.cache?.connect()
   }
 

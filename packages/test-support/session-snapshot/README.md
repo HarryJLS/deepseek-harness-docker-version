@@ -25,6 +25,8 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
+Identity normalization preserves durable question relationships with `{{question:n}}` tokens and gives their recorded continuation ids the same `{{message:n}}` tokens as the corresponding logged messages. Re-normalizing an already canonical question fixture leaves it unchanged.
+
 This package turns a shipped profile scenario into a keyless snapshot suite: write a scenario table and a fixtures directory, call the matching adapter once, and the kit owns launching or composing the profile, driving the scenario, comparing normalized output, and guarding the committed fixtures.
 
 ### Writing a snapshot suite

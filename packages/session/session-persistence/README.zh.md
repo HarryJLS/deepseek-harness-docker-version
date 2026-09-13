@@ -47,6 +47,8 @@ const headers = await ctx.sessionPersistence.list()        // every stored sessi
 
 ### 恢复与崩溃恢复
 
+后端可暴露 `sharedExecution` 以支持跨副本安全激活。Consumer 在 `prepare` 或会修改日志的恢复前取得执行权，持有至 agent 停止且写入完成后再释放。观察其他副本存活工作的调用方使用 `readFrom`，不使用会修复冷会话的 `load`。[MySQL 提供方](../session-persistence-mysql/README.zh.md) 实现此可选能力。
+
 恢复就是 `load` 加会话准备：存储日志连同其头部血缘一起返回，因此恢复后的 agent（智能体）看到相同的历史与组装。中途崩溃的会话重新加载时，其被中断的最终轮次会保留并保持平衡：`load` 为未获回答的调用追加合成 `tool/result` 与 `turn/end {interrupted}` closer，而不是丢弃事件——单个轮次可能很大，而这些事件在崩溃前已持久写入。只有从未完整写入的撕裂尾部碎片会被丢弃。
 
 ### 失败与恢复

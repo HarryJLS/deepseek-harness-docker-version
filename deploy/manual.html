@@ -490,7 +490,7 @@ ORDER BY session_id, seq;</code></pre>
     </tbody>
   </table></div>
   <div class="note"><p><strong>图片原件与请求变体均不写入 Redis 或 OceanBase。</strong>容器部署使用配置的临时目录，会话只保留路径、文件名和必要元数据。文件缺失时，后续 Agent 步骤会记录纯路径替换，查看原图需要重新附加文件。已有 <code>dsh_attachment_object</code> 行不会被删除或迁移。</p></div>
-  <p>Redis 按应用、用户、会话和事件拆分缓存，所有 key 使用 <code>dsh-</code> 前缀，默认有效期为两天。每个值最多 64 KiB，较大事件分块；缓存缺失或过期时从数据库回源。活跃会话仍应固定路由到所属节点，切换执行节点前先停止原节点。完整规则见 <a href="README.zh.md#redis-cache">Redis 缓存说明</a>。</p>
+  <p>Redis 按应用、用户、会话和事件拆分缓存，所有 key 使用 <code>dsh-</code> 前缀，默认有效期为两天。每个值最多 64 KiB，较大事件分块；缓存缺失或过期时从数据库回源。方案确认使用持久化会话事件，任意节点可以接收确认请求；执行占用与过期保护由 OceanBase 管理。完整规则见 <a href="README.zh.md#shared-confirmation">共享确认说明</a>。</p>
 </section>
 
 <section id="s7">

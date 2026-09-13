@@ -67,7 +67,32 @@ export function resolveDeploymentDocument(document) {
     database,
     redis: resolveRedis(deployment.redis),
     attachments: resolveAttachments(deployment.attachments),
+    execution: resolveExecution(deployment.execution),
   }
+}
+
+/** Resolve shared execution from Nacos without per-node routing configuration. */
+function resolveExecution(source = {}) {
+  if (source === null || typeof source !== 'object' || Array.isArray(source)) {
+    throw new Error('entrypoint: deployment.execution must be a mapping in Nacos')
+  }
+  const defaults = { leaseMs: 30000, renewIntervalMs: 5000, pollIntervalMs: 500, maxQuestionBytes: 65536 }
+  if (Object.keys(source).some(key => !Object.hasOwn(defaults, key))) {
+    throw new Error('entrypoint: unknown deployment.execution field')
+  }
+  const config = { ...defaults, ...source }
+  for (const [key, min, max] of [
+    ['leaseMs', 3000, 300000], ['renewIntervalMs', 100, 100000],
+    ['pollIntervalMs', 100, 10000], ['maxQuestionBytes', 1024, 4194304],
+  ]) {
+    if (!Number.isSafeInteger(config[key]) || config[key] < min || config[key] > max) {
+      throw new Error(`entrypoint: invalid deployment.execution.${key}`)
+    }
+  }
+  if (config.renewIntervalMs * 3 > config.leaseMs) {
+    throw new Error('entrypoint: deployment.execution.leaseMs must be at least three renewIntervalMs')
+  }
+  return config
 }
 
 /** Validate all Redis options without accepting a second environment configuration source. */
@@ -140,6 +165,7 @@ export function deploymentEnvironment(resolved) {
     DSH_DATABASE_SECRET: JSON.stringify(resolved.database),
     DSH_REDIS_SECRET: JSON.stringify(resolved.redis),
     DSH_ATTACHMENTS_CONFIG: JSON.stringify(resolved.attachments),
+    DSH_EXECUTION_CONFIG: JSON.stringify(resolved.execution),
     DSH_NACOS_USERNAME: NACOS_AUTH.username,
     DSH_NACOS_PASSWORD: NACOS_AUTH.password,
   }

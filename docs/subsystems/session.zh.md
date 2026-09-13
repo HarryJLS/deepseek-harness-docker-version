@@ -583,6 +583,8 @@ interface TurnEndReasonMap {
 
 ## Remote 目录与 workspace 打开
 
+`SessionQuestionDecisionRequest` 以会话标识、问题标识、版本及结构化回答或关闭操作定位已保存问题。`SessionQuestionDecisionValue` 确认接收并标识重复决定。共享执行在激活前取得执行权、确认接收前提交输入，并以投影和运行状态帧跟随已提交历史；这些操作由 [Session Controller](../../packages/api/session-controller/README.zh.md) 负责。
+
 `ModelCatalog` 是 `session/modelCatalog` 返回的 Host generation 模型目录：它携带部署默认值、可路由 provider id、成功的 provider 分组与相互隔离的 provider 失败。它不由某个 Session 派生，因此与 Session projection 分开保存。
 
 `SessionOpenWorkspacePathRequest` 携带绝对路径或已按 workspace 解析的 `path`。`SessionOpenWorkspacePathValue` 确认 Host 已接受原生交接。Session-aware Client 会在已知当前 Session cwd 时据此解析相对路径；controller 将路径原样交给打开器，并通过 Session Remote 错误词汇表报告无效请求、取消与打开器失败。
@@ -691,6 +693,13 @@ inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<{ meta: SessionH
 @Remote('prompt') prompt(request: SessionPromptRequest, signal: AbortSignal): Promise<SessionPromptValue>
 
 /**
+ * Answer a persisted question and admit its continuation on any replica.
+ * @param request - session, question identity/version, and the user's answer.
+ * @returns acknowledgement after the decision and admitted input are durable.
+ */
+@Remote('answerQuestion') answerQuestion(request: SessionQuestionDecisionRequest): Promise<SessionQuestionDecisionValue>
+
+/**
  * Read one image proven reachable from the addressed Session log.
  * @param request - Session and attachment identities used for authorization.
  * @returns the durable attachment reference and base64-encoded bytes.
@@ -709,7 +718,7 @@ inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<{ meta: SessionH
  * @param request - Session whose active Agent turn is cancelled.
  * @returns acknowledgement that cancellation was requested.
  */
-@Remote('cancel') cancel(request: SessionCancelRequest): SessionCancelValue
+@Remote('cancel') async cancel(request: SessionCancelRequest): Promise<SessionCancelValue>
 
 /**
  * Read one cold-safe, message-aligned Session history page.

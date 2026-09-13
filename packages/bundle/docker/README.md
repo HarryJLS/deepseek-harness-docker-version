@@ -25,6 +25,8 @@ The container entrypoint selects this bundle after base and web-app. Its Cordis 
 <a id="use-this-package"></a>
 ## Use this package
 
+The bundle enables durable questions and database-fenced session execution. Nacos `deployment.execution` supplies the reservation and polling timings plus the question byte limit. [Shared confirmation](../../../deploy/README.md#shared-confirmation) defines the supported sequential workflow and NAS requirements.
+
 Use the root [Dockerfile](../../../Dockerfile) and the [deployment guide](../../../deploy/README.md). The entrypoint validates database settings from Nacos before profile composition. Nacos credentials are source-owned bootstrap values, not operator environment inputs.
 
 The bundle replaces file-backed settings and credentials with Nacos providers, storage-json with storage-mysql, and session-persistence-jsonl with session-persistence-mysql using a Redis event cache. The storage domain selects the mysql backend. Attachment-local uses a Nacos-configured temporary directory; neither context store receives image bytes.

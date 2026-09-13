@@ -308,7 +308,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/api/session-controller/src/index.ts:69`](../packages/api/session-controller/src/index.ts)
+来源：[`packages/api/session-controller/src/index.ts:76`](../packages/api/session-controller/src/index.ts)
 
 <a id="deepseek-aidsh-api-settings-controller"></a>
 
@@ -483,7 +483,7 @@ export interface ConnectionConfig {
 }
 ```
 
-来源：[`packages/client/connection/src/index.ts:55`](../packages/client/connection/src/index.ts)
+来源：[`packages/client/connection/src/index.ts:70`](../packages/client/connection/src/index.ts)
 
 <a id="deepseek-aidsh-client-hmr"></a>
 
@@ -696,7 +696,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/experimental/agent-team/src/types.ts:125`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:131`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="deepseek-aidsh-experimental-inspector"></a>
 
@@ -1106,7 +1106,7 @@ export interface DeepSeekCatalogModel {
 
 依赖：[`ModelModality`](../packages/llm/llm/src/index.ts) · [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts)
 
-来源：[`packages/llm/llm-deepseek/src/index.ts:107`](../packages/llm/llm-deepseek/src/index.ts)
+来源：[`packages/llm/llm-deepseek/src/index.ts:124`](../packages/llm/llm-deepseek/src/index.ts)
 
 <a id="deepseek-aidsh-llm-pi-ai"></a>
 
@@ -1372,7 +1372,7 @@ export type PiAiThinkingFormat = NonNullable<OpenAICompletionsCompat['thinkingFo
 
 依赖：`Api`（`@earendil-works/pi-ai`）· `CacheRetention`（`@earendil-works/pi-ai`）· `Model`（`@earendil-works/pi-ai`）· `ModelThinkingLevel`（`@earendil-works/pi-ai`）· `OpenAICompletionsCompat`（`@earendil-works/pi-ai`）· [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts) · `ThinkingBudgets`（`@earendil-works/pi-ai`）· `Transport`（`@earendil-works/pi-ai`)
 
-来源：[`packages/llm/llm-pi-ai/src/config.ts:213`](../packages/llm/llm-pi-ai/src/config.ts)
+来源：[`packages/llm/llm-pi-ai/src/config.ts:216`](../packages/llm/llm-pi-ai/src/config.ts)
 
 <a id="deepseek-aidsh-llm-replay"></a>
 
@@ -1987,6 +1987,8 @@ export type JsonlCompression = 'zstd' | 'none'
 export interface Config extends MysqlConnectionConfig {
   /** Optional shared event cache; container deployments require this configuration from Nacos. */
   redis?: RedisSessionCacheConfig
+  /** Enable exclusive, request-scoped execution across replicas sharing these tables. */
+  execution?: SharedExecutionConfig
   /** Maximum cold Session preparations retained for history-to-resume reuse. */
   preparedSessionCacheSize?: number
   /** Fixed live-event coalescing window; not a backend completion deadline. */
@@ -2022,11 +2024,21 @@ export interface RedisSessionCacheConfig {
   /** Per-command response deadline in milliseconds. */
   commandTimeoutMs?: number
 }
+
+/** Deployment-owned execution and observation timings. */
+export interface SharedExecutionConfig {
+  /** Reservation lifetime after its most recent successful database renewal. */
+  leaseMs: number
+  /** Renewal interval; must leave at least two further renewal opportunities. */
+  renewIntervalMs: number
+  /** Committed-history and cancellation observation interval. */
+  pollIntervalMs: number
+}
 ```
 
 依赖：[`MysqlConnectionConfig`](../packages/util/mysql-schema/src/index.ts)
 
-来源：[`packages/session/session-persistence-mysql/src/index.ts:50`](../packages/session/session-persistence-mysql/src/index.ts)
+来源：[`packages/session/session-persistence-mysql/src/index.ts:52`](../packages/session/session-persistence-mysql/src/index.ts)
 
 <a id="deepseek-aidsh-session-persistence-sqlite"></a>
 
@@ -2420,7 +2432,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/storage/storage-domain/src/index.ts:52`](../packages/storage/storage-domain/src/index.ts)
+来源：[`packages/storage/storage-domain/src/index.ts:53`](../packages/storage/storage-domain/src/index.ts)
 
 <a id="deepseek-aidsh-storage-json"></a>
 
@@ -2459,7 +2471,7 @@ export interface Config extends MysqlConnectionConfig {
 
 依赖：[`MysqlConnectionConfig`](../packages/util/mysql-schema/src/index.ts)
 
-来源：[`packages/storage/storage-mysql/src/index.ts:51`](../packages/storage/storage-mysql/src/index.ts)
+来源：[`packages/storage/storage-mysql/src/index.ts:50`](../packages/storage/storage-mysql/src/index.ts)
 
 <a id="deepseek-aidsh-storage-sqlite"></a>
 
@@ -3193,7 +3205,7 @@ export interface Config {
 
 依赖：[`AgentOptions`](subsystems/core.zh.md)
 
-来源：[`packages/subagent/tool-subagent/src/index.ts:48`](../packages/subagent/tool-subagent/src/index.ts)
+来源：[`packages/subagent/tool-subagent/src/index.ts:49`](../packages/subagent/tool-subagent/src/index.ts)
 
 <a id="deepseek-aidsh-tool-subagent-report"></a>
 
@@ -3385,6 +3397,22 @@ export type ApprovalPolicy = 'ask' | 'never'
 ```
 
 来源：[`packages/interaction/user-approval/src/index.ts:142`](../packages/interaction/user-approval/src/index.ts)
+
+<a id="deepseek-aidsh-user-questions"></a>
+
+## `@deepseek-ai/dsh-user-questions`
+
+```ts config-catalog
+/** Human-question delivery and retained payload limits. */
+export interface Config {
+  /** End the requesting turn and accept a later, independently routed decision. */
+  durable?: boolean
+  /** Maximum UTF-8 bytes in a durable question batch or answer. */
+  maxRequestBytes?: number
+}
+```
+
+来源：[`packages/interaction/user-questions/src/index.ts:41`](../packages/interaction/user-questions/src/index.ts)
 
 <a id="deepseek-aidsh-web"></a>
 
@@ -3662,7 +3690,6 @@ export interface Config {
 - `@deepseek-ai/dsh-tool-call-timeout-policy` — 需要 `tools`（[`packages/guard/timeout-policy/src/index.ts`](../packages/guard/timeout-policy/src/index.ts)）
 - `@deepseek-ai/dsh-tool-cordis` — 需要 `tools` · `systemPrompt` · `dynamicCordisRunner` · `cordisInspect`（[`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts)）
 - `@deepseek-ai/dsh-tool-subagent-control` — 需要 `tools` · `subagents`（[`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts)）
-- `@deepseek-ai/dsh-user-questions`（[`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts)）
 - `@deepseek-ai/dsh-webhook` — 需要 `agents` · `agentDefaultModel` · `agentPresets` · `permissionPresets` · `sessionTitle` · `workspaceRegistry`（[`packages/webhook/webhook/src/index.ts`](../packages/webhook/webhook/src/index.ts)）
 - `@deepseek-ai/dsh-workspace` — 需要 `storageDomain` · `sessionPersistence`（[`packages/workspace/workspace/src/index.ts`](../packages/workspace/workspace/src/index.ts)）
 

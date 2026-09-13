@@ -2,10 +2,10 @@
 
 const UUID_FRAGMENT_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 const LEGACY_TOKEN_RE = /^\{\{(?:sessionId|messageId)\}\}$/
-const CANONICAL_TOKEN_RE = /^\{\{(session|message|approval|workflow|command|rpc|retry|id):([1-9]\d*)\}\}$/
+const CANONICAL_TOKEN_RE = /^\{\{(session|message|approval|question|workflow|command|rpc|retry|id):([1-9]\d*)\}\}$/
 const ID_KEY_RE = /(?:^id$|Id$|Ids$)/
 
-type IdentityKind = 'session' | 'message' | 'approval' | 'workflow' | 'command' | 'rpc' | 'retry' | 'id'
+type IdentityKind = 'session' | 'message' | 'approval' | 'question' | 'workflow' | 'command' | 'rpc' | 'retry' | 'id'
 
 interface ParsedLog {
   readonly records: Record<string, unknown>[]
@@ -84,7 +84,11 @@ export function redactSessionSnapshotIds(logs: readonly string[]): string[] {
     const identifiedMessage = messageId(value)
     if (identifiedMessage !== undefined) claim(identifiedMessage, 'message')
     for (const [childKey, item] of Object.entries(value)) {
-      if (recordType === 'approval/asked' || recordType === 'approval/decided') {
+      if (recordType === 'user-questions/state' && childKey === 'id' && 'version' in value) {
+        claim(item, 'question')
+      } else if (recordType === 'user-questions/state' && childKey === 'messageId') {
+        claim(item, 'message')
+      } else if (recordType === 'approval/asked' || recordType === 'approval/decided') {
         if (childKey === 'id') claim(item, 'approval')
       } else if (childKey === 'commandId') {
         claim(item, 'command', true)

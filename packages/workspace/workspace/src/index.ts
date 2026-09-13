@@ -11,7 +11,8 @@ import { basename } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
-import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
+import type { Domain, DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
+import { withUser } from '@deepseek-ai/dsh-user-context'
 import { WorkspaceEntity } from './entity.ts'
 import type { WorkspaceEntityHost } from './entity.ts'
 
@@ -93,6 +94,7 @@ export class WorkspaceRegistry extends Service {
   static inject = ['storageDomain', 'sessionPersistence']
 
   private table?: KvTable<WorkspaceId, WorkspaceRecord>
+  private domain?: Domain<typeof workspaceDomainSpec>
   private global?: DomainGlobal<WorkspaceDomainState>
   private state?: WorkspaceDomainState
   private readonly entities = new Map<WorkspaceId, WorkspaceEntity>()
@@ -102,7 +104,7 @@ export class WorkspaceRegistry extends Service {
   private operationTail: Promise<void> = Promise.resolve()
 
   private readonly host: WorkspaceEntityHost = {
-    table: () => this.requireTable(),
+    update: (id, update) => this.enqueueOperation(() => this.requireTable().update(id, update)),
     sessionPath: id => this.sessionPaths.get(id),
     readSessionHeader: id => this.readSessionHeader(id),
     rememberSessionPath: (id, path) => {
@@ -118,25 +120,43 @@ export class WorkspaceRegistry extends Service {
   /** Open the domain, finish bootstrap when required, and rebuild the ordered cache. */
   protected async [Service.init](): Promise<void> {
     const domain = await this.ctx.storageDomain.open(workspaceDomainSpec)
+    this.domain = domain
     this.ctx.effect(() => () => domain.close(), 'workspace.domainClose')
+    this.bindDomain(domain)
+
+    await this.enqueueOperation(async () => {
+      await this.recoverPendingMutation()
+      const state = this.requireState()
+      this.validateStoredState(state)
+      if (!state.initialized) {
+        const headers = await this.ctx.sessionPersistence.list()
+        await this.replaceHeaderIndex(headers)
+        await this.bootstrap(headers)
+      } else if (this.requireTable().size > 0) {
+        await this.replaceHeaderIndex(await this.ctx.sessionPersistence.list())
+      }
+
+      await this.indexLiveSessions()
+      this.validateStoredState(this.requireState())
+      this.rebuildEntities()
+      this.reportFilteredCandidates()
+    })
+  }
+
+  private bindDomain(domain: Domain<typeof workspaceDomainSpec>): void {
     this.table = domain.table('workspaces')
     this.global = domain.global
     this.state = domain.global.get()
+  }
 
-    await this.recoverPendingMutation()
-    this.validateStoredState(this.state)
-    if (!this.state.initialized) {
-      const headers = await this.ctx.sessionPersistence.list()
-      await this.replaceHeaderIndex(headers)
-      await this.bootstrap(headers)
-    } else if (this.table.size > 0) {
-      await this.replaceHeaderIndex(await this.ctx.sessionPersistence.list())
-    }
-
-    await this.indexLiveSessions()
-    this.validateStoredState(this.requireState())
-    this.rebuildEntities()
-    this.reportFilteredCandidates()
+  /**
+   * Refresh shared workspace metadata before a request uses synchronous lookups.
+   * Process-local deployments retain their existing in-memory read behavior.
+   * @returns completion after a consistent database snapshot is installed.
+   */
+  async refresh(): Promise<void> {
+    if (this.ctx.sessionPersistence.sharedExecution === undefined) return
+    await this.enqueueOperation(() => Promise.resolve())
   }
 
   /**
@@ -647,6 +667,26 @@ export class WorkspaceRegistry extends Service {
 
   private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.operationTail.then(async () => {
+      const domain = this.domain
+      if (domain === undefined) throw new Error('workspace registry is not started yet')
+      if (this.ctx.sessionPersistence.sharedExecution !== undefined) {
+        try {
+          return await domain.atomic(async (transaction) => {
+            this.bindDomain(transaction)
+            const headers = await withUser(undefined, () => this.ctx.sessionPersistence.list())
+            await this.indexHeaders(headers.filter(header =>
+              !this.headers.has(header.id) || this.invalidSessionPaths.has(header.id)))
+            await this.indexLiveSessions()
+            await this.recoverPendingMutation()
+            this.validateStoredState(this.requireState())
+            this.rebuildEntities()
+            return operation()
+          })
+        } finally {
+          this.bindDomain(domain)
+          this.rebuildEntities()
+        }
+      }
       // A committed delete may leave only its marker cleanup pending. Retry
       // recovery before another create/delete can overwrite that pending operation record.
       await this.recoverPendingMutation()

@@ -13,6 +13,27 @@ from deepseek_harness import DeepSeekHarness, HarnessClient, HarnessConfig, Noti
 from deepseek_harness.errors import JsonRpcError
 
 
+def test_preserves_durable_question_event_payloads() -> None:
+    fixture = (
+        Path(__file__).resolve().parents[3]
+        / "packages/sdk/protocol/tests/expected/durable-question-events.json"
+    )
+    expected = json.loads(fixture.read_text(encoding="utf-8"))
+    client = HarnessClient()
+    observed = []
+    with client.subscribe_session_notifications("main") as subscription:
+        for index, value in enumerate(expected):
+            event = {"seq": index, "time": 0, **json.loads(json.dumps(value))}
+            client._handle_message({
+                "jsonrpc": "2.0",
+                "method": "session.event",
+                "params": {"sessionId": "main", "event": event},
+            })
+            received = subscription.next().payload["event"]
+            observed.append({"type": received["type"], "data": received["data"]})
+    assert observed == expected
+
+
 def test_high_level_sdk_runs_turn_and_collects_final_response(tmp_path: Path) -> None:
     script = tmp_path / "fake_runtime.py"
     env_dump = tmp_path / "env.json"

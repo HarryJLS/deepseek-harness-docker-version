@@ -25,6 +25,8 @@ kind: "package-bundle"
 <a id="use-this-package"></a>
 ## 使用此包
 
+此组合包启用持久化问题及数据库执行权校验。Nacos 的 `deployment.execution` 提供执行占用和轮询时间参数，以及问题字节限制。[共享确认](../../../deploy/README.zh.md#shared-confirmation) 定义支持的顺序工作流与 NAS 要求。
+
 使用根目录 [Dockerfile](../../../Dockerfile) 并遵循[部署指南](../../../deploy/README.zh.md)。入口程序在组合配置档前校验 Nacos 中的数据库设置。Nacos 凭据属于源码中的启动配置，不是运维环境变量输入。
 
 本包用 Nacos 提供方替代文件设置和凭据，用 storage-mysql 替代 storage-json，并用带 Redis 事件缓存的 session-persistence-mysql 替代 session-persistence-jsonl。存储域选择 mysql 后端。attachment-local 使用 Nacos 配置的临时目录；两个上下文存储都不接收图片字节。

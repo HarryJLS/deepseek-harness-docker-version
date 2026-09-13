@@ -25,6 +25,8 @@ interface StorageForms {}
 
 ## 后端约定
 
+可选的 `KvUnit.transaction()` 使用事务级单元执行短回调。MySQL 锁定既有应用与单元记录，并一并提交事务级读写。`Domain.atomic()` 在该事务内校验最新快照，将修改与原缓存隔离，仅在提交后发布最终值。Consumer 必须使用传入的领域句柄，并等待所有写入；不支持的后端会拒绝原子更新。
+
 ```ts type-equiv
 /**
  * One registered backend. A backend owns exactly one medium and shares its
@@ -79,6 +81,15 @@ interface DomainSpec {
 ```ts type-equiv
 /** One open domain, typed by its spec. */
 interface Domain<S extends DomainSpec> {
+  /**
+   * Refresh and update a shared domain in one backend transaction.
+   * The callback must use its scoped handle and await every write. Observers
+   * receive only final committed values; failure leaves the original cache unchanged.
+   * @param operation - short metadata operation over the fresh transaction snapshot.
+   * @returns its result after commit and cache publication.
+   */
+  atomic<T>(operation: (domain: Domain<S>) => Promise<T>): Promise<T>
+
   /** Domain name from the spec. */
   readonly name: string
   /** Global singleton handle; a spec without `global` has no usable handle (`never`). */

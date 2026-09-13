@@ -4,7 +4,7 @@ import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-cli
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   AskUserQuestionAnswer, AskUserQuestionItem,
-} from '@deepseek-ai/dsh-user-questions'
+} from '@deepseek-ai/dsh-user-questions/types'
 import type { createQuestionDraftStore } from '../draft-store.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-session/client' {
@@ -122,6 +122,7 @@ export class PendingQuestion {
   readonly #onAbort: (() => void) | undefined
   readonly #delegated = Symbol('pending question delegated')
   #settled = false
+  readonly #submission: ((answer: QuestionAnswer | null) => Promise<void>) | undefined
 
   /**
    * @param sessionId - Agent/Session identity owning the scoped request.
@@ -132,9 +133,11 @@ export class PendingQuestion {
     readonly sessionId: SessionId,
     questions: readonly AskUserQuestionItem[],
     signal?: AbortSignal,
+    durable?: { key: string; submit: (answer: QuestionAnswer | null) => Promise<void> },
   ) {
     nextQuestionKey += 1
-    this.key = `question:${String(nextQuestionKey)}`
+    this.key = durable?.key ?? `question:${String(nextQuestionKey)}`
+    this.#submission = durable?.submit
     this.questions = questions
     this.kind = planReviewOf(questions) === undefined ? 'question' : 'plan-review'
     const completion = Promise.withResolvers<QuestionAnswer>()
@@ -158,7 +161,9 @@ export class PendingQuestion {
    * Resolve the Host waterfall with the whole answer batch.
    * @param answer - complete structured answer batch.
    */
-  answer(answer: QuestionAnswer): Promise<void> {
+  async answer(answer: QuestionAnswer): Promise<void> {
+    if (this.#submission !== undefined) await this.#submission(answer)
+    if (this.#settled && this.#submission !== undefined) return
     return settlePendingComposer(() => {
       this.finish(() => { this.#resolve(answer) })
     }, 'pending question settlement failed')
@@ -180,7 +185,9 @@ export class PendingQuestion {
   }
 
   /** Reject the Host waterfall because the user closed the question. */
-  cancel(): Promise<void> {
+  async cancel(): Promise<void> {
+    if (this.#submission !== undefined) await this.#submission(null)
+    if (this.#settled && this.#submission !== undefined) return
     return settlePendingComposer(() => {
       this.finish(() => {
         this.#reject(questionError('the user cancelled ask_user_question', 'ASK_CANCELLED'))

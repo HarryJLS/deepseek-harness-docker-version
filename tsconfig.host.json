@@ -23,6 +23,7 @@
     "apps/web/tests/approval-composer.e2e.ts",
     "apps/web/tests/plan-control-row.e2e.ts",
     "apps/web/tests/plan-review.e2e.ts",
+    "apps/web/tests/durable-plan-review.e2e.ts",
     "apps/web/tests/steering.e2e.ts",
     "apps/web/tests/navigation-panes.e2e.ts",
     "apps/web/tests/chat-scroll-fixture.ts",

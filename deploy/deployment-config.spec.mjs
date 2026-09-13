@@ -14,6 +14,15 @@ function resolve(deployment) {
 }
 
 describe('Nacos deployment configuration', () => {
+  it('resolves shared execution timings and rejects unsafe or unknown Nacos settings', () => {
+    assert.deepEqual(resolve({ database }).execution, {
+      leaseMs: 30000, renewIntervalMs: 5000, pollIntervalMs: 500, maxQuestionBytes: 65536,
+    })
+    for (const execution of [
+      null, [], { routeByIp: true }, { leaseMs: 1000 }, { pollIntervalMs: 0 },
+      { leaseMs: 3000, renewIntervalMs: 2000 }, { maxQuestionBytes: 4194305 },
+    ]) assert.throws(() => resolve({ database, execution }), /deployment.execution/u)
+  })
   it('requires a complete Nacos database declaration', () => {
     for (const document of [undefined, {}, { deployment: {} }, { deployment: { database: {} } }]) {
       assert.throws(() => resolveDeploymentDocument(document), /deployment/u)

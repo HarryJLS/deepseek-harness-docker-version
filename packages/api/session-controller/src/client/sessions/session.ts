@@ -58,6 +58,8 @@ export interface SessionOptions {
    * (hidden, still reusable by connectWorkspace).
    */
   onEngaged?(session: Session): void
+  /** Publish a shared-history running-state update to the session list. */
+  onRunning?(session: Session, running: boolean): void
   /**
    * Manager-owned projection value store to adopt (frames route through the
    * manager and values outlive instantiation); omitted, the Session owns a
@@ -611,6 +613,11 @@ export class Session implements SessionFace {
   /** Apply one contiguous journal update already reconciled by the Remote stream. */
   private acceptEventChange(change: SessionJournalChange): void {
     switch (change.type) {
+      case 'state':
+        this.projections.seed(change.projections)
+        this.handleRunning(change.running)
+        this.options.onRunning?.(this, change.running)
+        return
       case 'replace':
         this.installWindow(change.entries, change.hasMore, change.page.projections)
         return

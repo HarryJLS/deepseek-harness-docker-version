@@ -2,6 +2,63 @@
 
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { Agent } from '@deepseek-ai/dsh-agent/types'
+import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { MessageId, ToolCallId } from '@deepseek-ai/dsh-llm/brand'
+
+/** Durable identity of one question batch, independent of any browser connection. */
+export type UserQuestionId = Branded<'UserQuestionId'>
+
+/** One unanswered question batch recorded in the session log. */
+export interface DurableUserQuestion {
+  /** Unique identity submitted with the user's decision. */
+  id: UserQuestionId
+  /** Event sequence of this request; prevents an old card deciding a replacement. */
+  version: number
+  /** Model tool call that requested the answer. */
+  callId: ToolCallId
+  /** Complete question text and choices; file contents are not accepted separately. */
+  questions: AskUserQuestionItem[]
+}
+
+/** Committed outcome of one durable question batch. */
+export interface UserQuestionDecision {
+  /** Identity of the answered request. */
+  id: UserQuestionId
+  /** Request version the user answered. */
+  version: number
+  /** Logged continuation message identity, also used to detect an unconsumed decision after recovery. */
+  messageId: MessageId
+  /** Null means the user dismissed the card to discuss the request. */
+  answer: AskUserQuestionAnswer | null
+  /** Whether this decision explicitly approves a plan-review intent. */
+  approvedPlan: boolean
+}
+
+/** Whole question state at one point in a session's history. */
+export interface UserQuestionState {
+  /** The batch awaiting a decision, or null after settlement. */
+  pending: DurableUserQuestion | null
+  /** Most recently committed decision, or null before the first one. */
+  decision: UserQuestionDecision | null
+}
+
+declare module '@deepseek-ai/dsh-session/types' {
+  interface SessionEventMap {
+    /** Complete durable question state; a pending request does not retain a running turn. */
+    'user-questions/state': UserQuestionState
+  }
+}
+
+declare module '@deepseek-ai/dsh-session-projection/types' {
+  interface SessionProjectionMap {
+    /** Question state reconstructed from the session log. */
+    userQuestions: UserQuestionState
+  }
+  interface SessionProjectionStateMap {
+    /** Question state shared by live and cold projections. */
+    userQuestions: UserQuestionState
+  }
+}
 
 /** One selectable answer offered to the user. */
 export interface AskUserQuestionOption {

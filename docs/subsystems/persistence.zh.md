@@ -8,6 +8,8 @@
 
 ## flush 检查点
 
+`SessionPersistence.sharedExecution` 可选地提供 `SharedSessionExecution` 及其可续期 `SessionExecutionLease`（[类型](../../packages/session/session-persistence/src/execution.ts)）。共享 Consumer 在激活或会修改日志的恢复前取得执行权，确认接收前持久化已准入输入，并在 agent 停止且最后写入完成后释放。独立观察者跟随物理 `readFrom` 事件，不得对其他副本正在执行的轮次进行冷修复。MySQL 提供方根据数据库时间校验写入方的执行权。
+
 `session/event` 是一个*同步*通知；持久化插件会将事件复制到逐会话控制器，而不阻塞生产方。第一个待处理事件会开启固定批处理窗口，后续事件会加入但不会重置截止时间。窗口到期后会启动一个持久化批次；该次写入期间接纳的事件会获得自己的截止时间，并形成后续批次。`session/flush` 会取消等待并排空至完全停稳，因此循环仍将其用作在领取下一个普通轮次之前的顺序与错误观察检查点。后台写入被拒绝时会保留对应事件并暂停自动重试；新事件会开启新的固定窗口，而显式 flush 会立即重试，并通过 `agent/error` 和 logger 报告失败，绝不会把失败记录成已关闭轮次之后的会话事件。dispose（资源释放）会执行同样的最终排空。配置的最大值只限制有意的批处理等待，不限制事件循环调度或后端完成持久化的延迟（[决策](../../.agents/notes/implemented/architecture/2026-08-08-bounded-session-persistence-write-batching.zh.md)）。
 
 ## 崩溃恢复保留被中断的轮次

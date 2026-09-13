@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import UserQuestionService, {
@@ -36,12 +37,12 @@ interface OptionSchemaShape {
   }
 }
 
-async function setup() {
+async function setup(durable = false) {
   const ctx = new Context()
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
-  await ctx.plugin(UserQuestionService)
+  await ctx.plugin(UserQuestionService, { durable })
   await ctx.plugin(toolAskUser)
   return ctx
 }
@@ -55,6 +56,42 @@ function stubAgent(id: string, delegationDepth = 0): Agent {
 }
 
 describe('ask_user_question tool', () => {
+  it('concludes with a durable question and records a later generic answer', async () => {
+    const ctx = await setup(true)
+    try {
+      const id = SessionId('durable-question')
+      const followup = vi.fn()
+      const agent = { id, session: Session.create(id), ctx, status: 'idle', followup } as unknown as Agent
+      ctx.agents.enter(agent, undefined)
+      const result = await ctx.tools.execute({
+        callId: ToolCallId('preview'), name: 'ask_user_question', agent, signal: testToolSignal,
+        arguments: { questions: [
+          { id: 'preview', question: 'Confirm the preview?', options: [{ label: 'Proceed' }] },
+          { id: 'note', question: 'Any comments?' },
+        ] },
+      })
+      expect(result).toMatchObject({ isError: false, concludesTurn: true })
+      expect(result.content).toEqual([{
+        type: 'text', text: "The questions are awaiting the user's answer. Stop here; do not proceed until the user responds.",
+      }])
+      const request = ctx.userQuestions.state(agent).pending!
+      ctx.userQuestions.decide(agent, request.id, request.version, {
+        answers: [{ id: 'preview', selected: ['Proceed'] }, { id: 'note', selected: [] }],
+      })
+      expect(ctx.userQuestions.state(agent).decision?.approvedPlan).toBe(false)
+      expect(JSON.stringify(followup.mock.calls)).toContain('Proceed')
+    } finally { await ctx.fiber.dispose() }
+  })
+  it('rejects a durable tool question with no live caller', async () => {
+    const ctx = await setup(true)
+    try {
+      const result = await ctx.tools.execute({
+        callId: ToolCallId('unowned'), name: 'ask_user_question', signal: testToolSignal,
+        arguments: { questions: [{ id: 'q', question: 'Continue?' }] },
+      })
+      expect(result).toMatchObject({ isError: true, error: { info: { code: 'CALLER_NOT_LIVE' } } })
+    } finally { await ctx.fiber.dispose() }
+  })
   it('registers a model-facing tool schema', async () => {
     const ctx = await setup()
     const schema = ctx.tools.schemas().find(tool => tool.name === 'ask_user_question')

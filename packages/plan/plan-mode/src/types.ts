@@ -9,8 +9,8 @@
  */
 
 /**
- * The plan projection's wire value. `active` is the logged state in force
- * (the last `plan/mode`, inactive before the first); `pending` is true while
+ * The plan projection's wire value. `active` folds explicit mode selections
+ * and approved durable reviews; `pending` is true while
  * a logged `/plan` selection targets a state other than `active`, has not
  * failed through its paired `command/done`, and no later `plan/mode` event has
  * recorded that state. Capability absence (plan-mode not composed) is the

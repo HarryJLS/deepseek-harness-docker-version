@@ -14,15 +14,17 @@
  */
 
 import { afterAll, describe, expect, it } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import mysql from 'mysql2/promise'
 import type { StorageBackend } from '@deepseek-ai/dsh-storage'
 import { runKvBackendContract } from '../../storage/tests/contract.ts'
-import { createPool, type Config } from '../src/index.ts'
+import { createPool } from '../src/index.ts'
 
 const url = process.env.DSH_TEST_MYSQL_URL
 
 /** Distinct application per run so a repeat never inherits a previous medium. */
 let counter = 0
+const runId = randomUUID()
 
 if (url === undefined) {
   describe('mysql kv backend', () => {
@@ -45,9 +47,9 @@ if (url === undefined) {
 
   runKvBackendContract('mysql', async () => {
     counter += 1
-    const app = `dsh_contract_${String(counter)}`
+    const app = `dsh_contract_${runId}_${String(counter)}`
     apps.push(app)
-    const config: Config = { url, app }
+    const config = { url, app }
     const open = (): Promise<StorageBackend> => createBackend(config)
     return { backend: await open(), reopen: open }
   })
@@ -58,7 +60,7 @@ if (url === undefined) {
       // this replaces separated applications by schema, and a shared schema
       // let two of them overwrite each other's kv_record rows.
       counter += 1
-      const [left, right] = [`dsh_pair_a_${String(counter)}`, `dsh_pair_b_${String(counter)}`]
+      const [left, right] = [`dsh_pair_a_${runId}_${String(counter)}`, `dsh_pair_b_${runId}_${String(counter)}`]
       apps.push(left, right)
       const descriptor = { name: 'shared', version: 1, tables: ['t'], hasGlobal: false }
       const backends = await Promise.all([
@@ -81,8 +83,36 @@ if (url === undefined) {
     })
   })
 
+  describe('mysql unit transactions', () => {
+    it('commits grouped writes, rolls back failures, and rejects nesting', async () => {
+      const app = `dsh_tx_${runId}`
+      apps.push(app)
+      const backend = await createBackend({ url, app })
+      const unit = await backend.kv!.open({ name: 'atomic', version: 1, tables: ['records'], hasGlobal: true })
+      await unit.transaction!(async (tx) => {
+        await tx.putRecord('records', 'key', { value: 'committed' })
+        await tx.setGlobal({ ready: true })
+      })
+      await expect(unit.transaction!(async (tx) => {
+        await tx.putRecord('records', 'key', { value: 'rolled back' })
+        await tx.setGlobal({ ready: false })
+        throw new Error('rollback test')
+      })).rejects.toThrow('rollback test')
+      expect(await unit.loadAll()).toEqual({
+        tables: { records: { key: { value: 'committed' } } }, global: { ready: true },
+      })
+      await expect(unit.transaction!(async (tx) => {
+        await tx.transaction!(async () => {})
+      })).rejects.toThrow('nested')
+      await unit.close()
+      await expect(unit.transaction!(async () => {})).rejects.toMatchObject({ code: 'closed' })
+      await backend.close()
+    })
+  })
+
   /** Build one backend over the configured medium by applying the plugin's own setup. */
-  async function createBackend(config: Config): Promise<StorageBackend> {
+  async function createBackend(config: { url: string; app: string }): Promise<StorageBackend> {
+    const resolved = { url: config.url, app: config.app, snowflakeWorkerId: 924 }
     const { apply } = await import('../src/index.ts')
     const registered: { backend?: unknown } = {}
     const ctx = {
@@ -93,8 +123,8 @@ if (url === undefined) {
       effect: (run: () => unknown) => { run() },
       provide: () => {},
     }
-    await apply(ctx as never, config)
-    pools.push(createPool(config))
+    await apply(ctx as never, resolved)
+    pools.push(createPool(resolved))
     return registered.backend as StorageBackend
   }
 }
