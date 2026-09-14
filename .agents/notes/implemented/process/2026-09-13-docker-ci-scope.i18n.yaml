@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-09-13-docker-ci-scope.md
-2026-09-13-docker-ci-scope.md: 617ad2f1b2c5aea60b5d41750075b71ecfc9f31a
-2026-09-13-docker-ci-scope.zh.md: a9d3540b152b3d238d8fb82ddb64a6cc21b87213
+2026-09-13-docker-ci-scope.md: 8b67fba713cd97fe908e927ae20f070dfe2a255c
+2026-09-13-docker-ci-scope.zh.md: 20ed7d66511811b5716fc874cf5dbcec58802a58

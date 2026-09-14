@@ -10,8 +10,6 @@ kind: "package-reference"
 
 `@deepseek-ai/dsh-api-workspace-controller` 拥有 Host 的 `ctx.workspaceController` 服务和生成的 Client `ctx.remote.workspace` namespace。它的 Remote 方法负责创建、重命名、移除和重排 Workspace，在 Workspace 内重排 Session，从 Workspace 导航中归档 Session，以及跟随完整的 Workspace 投影。当 Client 必须修改或跟随 Workspace 导航时，请通过 API Gateway 使用它。本包同时拥有 `ctx.directoryPickerController` 与生成的 `ctx.remote.directoryPicker` namespace，因为它承载的选目录 seam 是抽象的，自身从不作为 Loader entry。
 
-工作区注册仍在应用范围内共享，但会话列表与归档集合按请求用户过滤。归档会话或调整其顺序要求该用户拥有会话。过滤使用会话查询服务，不隔离工作区文件系统访问。
-
 ## 目录
 
 - [使用本包](#use-this-package)
@@ -24,9 +22,11 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
+工作区注册仍在应用范围内共享，但会话列表与归档集合按请求用户过滤。归档会话或调整其顺序要求该用户拥有会话。过滤使用会话查询服务，不隔离工作区文件系统访问。
+
 共享部署在使用缓存标识前刷新注册表，并按会话提供方配置的间隔轮询已提交的工作区基线。因此，一个副本创建的工作区可在另一个副本上选择，无需重启。注册表的原子更新路径保护并发成员写入。
 
-Host 控制器会串行执行正确性取决于当前 registry 状态的变更，并为预期失败返回稳定的 `WorkspaceError` 值。它的 `follow()` 流会同步订阅持久 Workspace 变更，先发出一份完整 baseline，再按顺序发出 `upsert`、`remove`、`order` 和 `archived` 增量。重连会以替换 baseline 开始新一代，因此消费方不依赖收到断线期间的每个增量。
+Host 控制器会串行执行正确性取决于当前 registry 状态的变更，并为预期失败抛出带稳定 `workspace/*` 或 `directory-picker/*` 码的 `RemoteError`。它的 `follow()` 流会同步订阅持久 Workspace 变更，先发出一份完整 baseline，再按顺序发出 `upsert`、`remove`、`order` 和 `archived` 增量。重连会以替换 baseline 开始新一代，因此消费方不依赖收到断线期间的每个增量。
 
 Client 入口提供 `ClientWorkspaceModel` 和 `createWorkspaceStateStream()`。该模型拥有 Workspace 行、registry 顺序、已归档 Session id、一元变更回声，以及流与一元调用的竞态处理。较新的 Host 行按 `updatedAt` 获胜；已提交的流顺序优先于较旧的一元响应；已经移除的 Workspace id 不会被延迟数据复活。该包公开与框架无关的快照和订阅，把导航策略与 React hook 留给 UI owner。
 
@@ -58,3 +58,5 @@ Client 入口提供 `ClientWorkspaceModel` 和 `createWorkspaceStateStream()`。
 无。
 
 </details>
+
+**运行时不变式：** 不发布伴生入口。Workspace Registry 负责持久化，每次流生成都是完整投影。

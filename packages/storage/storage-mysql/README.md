@@ -40,6 +40,8 @@ Deleting a record sets `is_deleted` to `Y`. Reads omit it, and a later upsert re
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+No runtime invariant companion is published. Transaction durability and reopen behavior require database integration checks; the storage hub owns backend registration.
+
 <details>
 <summary>Implementation internals</summary>
 

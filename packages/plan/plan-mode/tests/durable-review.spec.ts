@@ -8,7 +8,7 @@ import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import UserQuestions, { type UserQuestionId } from '@deepseek-ai/dsh-user-questions'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
-import PlanMode, { foldPlanMode } from '../src/index.ts'
+import PlanMode from '../src/index.ts'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 
 const roots: Context[] = []
@@ -22,8 +22,8 @@ async function runtime(responses: ConstructorParameters<typeof MockAdapter>[0], 
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)
-  await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(SessionProjections)
+  await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(UserQuestions, { durable: true, maxRequestBytes: 4096 })
   await ctx.plugin(PlanMode, { section: 'Plan without executing changes.' })
   const model = new MockAdapter(responses)
@@ -57,9 +57,9 @@ describe('durable plan review', () => {
     expect(agent.status).toBe('idle')
     expect(model.requests).toHaveLength(1)
     expect(request.questions[0]?.detail).toBe(plan)
-    expect(agent.session.events.at(-1)?.type).toBe('turn/end')
+    expect(agent.session.snapshotEvents().at(-1)?.type).toBe('turn/end')
     expect(ctx.sessionProjections.snapshot(agent.session).values.userQuestions?.pending).toEqual(request)
-    expect(foldPlanMode(agent.session.events)).toBe(true)
+    expect(ctx.planMode.get(agent).active).toBe(true)
     const write = vi.fn(async () => [{ type: 'text' as const, text: 'written' }])
     ctx.tools.register(defineContentToolFixture({ name: 'write', description: 'Write', parameters: {}, execute: write }))
     const result = await ctx.tools.execute({
@@ -70,21 +70,22 @@ describe('durable plan review', () => {
     agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Run before confirmation.' }], source: { kind: 'user' } }))
     await agent.whenIdle()
     expect(model.requests).toHaveLength(1)
-    expect(agent.session.events.at(-1)).toMatchObject({ type: 'turn/end', data: { reason: { kind: 'blocked' } } })
+    expect(agent.session.snapshotEvents().at(-1)).toMatchObject({ type: 'turn/end', data: { reason: { kind: 'blocked' } } })
   })
 
   it('reconstructs the card on another runtime and executes an approved continuation once', async () => {
     const original = await pending()
-    const { ctx, agent, model } = await runtime([textResponse('Applied the approved plan.')], original.agent.session.events)
+    const { ctx, agent, model } = await runtime([textResponse('Applied the approved plan.')], original.agent.session.snapshotEvents())
     const { id, version } = original.request
     const answer = { answers: [{ id: 'plan-review', selected: ['Approve'] }] }
     expect(ctx.userQuestions.decide(agent, id, version, answer)).toBe(true)
     expect(ctx.userQuestions.decide(agent, id, version, answer)).toBe(false)
     await agent.whenIdle()
-    expect(foldPlanMode(agent.session.events)).toBe(false)
+    expect(ctx.planMode.get(agent).active).toBe(false)
     expect(ctx.userQuestions.state(agent).pending).toBeNull()
     expect(model.requests).toHaveLength(1)
-    expect(model.requests[0]?.system).not.toContain('Plan without executing changes.')
+    expect(JSON.stringify(model.requests[0]?.messages.filter(message => message.role === 'system')))
+      .not.toContain('Plan without executing changes.')
     expect(JSON.stringify(model.requests[0]?.messages)).toContain('The user approved the submitted plan.')
     expect(ctx.userQuestions.decide(agent, id, version, answer)).toBe(false)
     await agent.whenIdle()
@@ -111,13 +112,13 @@ describe('durable plan review', () => {
     const original = await pending()
     const { ctx, agent, model } = await runtime([
       toolCallResponse('revised-call', 'exit_plan_mode', { plan: '# Revised plan\nApply the feedback.' }),
-    ], original.agent.session.events)
+    ], original.agent.session.snapshotEvents())
     const { id, version } = original.request
     ctx.userQuestions.decide(agent, id, version, {
       answers: [{ id: 'plan-review', selected: ['Keep planning'], custom: 'Change the second step.' }],
     })
     await agent.whenIdle()
-    expect(foldPlanMode(agent.session.events)).toBe(true)
+    expect(ctx.planMode.get(agent).active).toBe(true)
     expect(ctx.userQuestions.state(agent).pending?.id).not.toBe(id)
     expect(JSON.stringify(model.requests[0]?.messages)).toContain('Change the second step.')
     expect(ctx.userQuestions.decide(agent, id, version, {
@@ -127,13 +128,13 @@ describe('durable plan review', () => {
 
   it('dismisses without starting work and logs the dismissal when discussion resumes', async () => {
     const original = await pending()
-    const { ctx, agent, model } = await runtime([textResponse('Discussed the change.')], original.agent.session.events)
+    const { ctx, agent, model } = await runtime([textResponse('Discussed the change.')], original.agent.session.snapshotEvents())
     ctx.userQuestions.decide(agent, original.request.id, original.request.version, null)
     expect(model.requests).toHaveLength(0)
     agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Explain the second step.' }], source: { kind: 'user' } }))
     await agent.whenIdle()
     expect(JSON.stringify(model.requests[0]?.messages)).toContain('dismissed the pending question')
-    expect(foldPlanMode(agent.session.events)).toBe(true)
+    expect(ctx.planMode.get(agent).active).toBe(true)
   })
 
   it('rejects oversized questions before recording a pending state', async () => {
@@ -168,17 +169,17 @@ describe('durable plan review', () => {
 
   it('resumes an acknowledged decision whose input was not admitted before a crash', async () => {
     const original = await pending()
-    const first = await runtime([textResponse('First execution.')], original.agent.session.events)
+    const first = await runtime([textResponse('First execution.')], original.agent.session.snapshotEvents())
     const answer = { answers: [{ id: 'plan-review', selected: ['Approve'] }] }
     first.ctx.userQuestions.decide(first.agent, original.request.id, original.request.version, answer)
-    const decision = first.agent.session.events.findLast(event =>
+    const decision = first.agent.session.snapshotEvents().findLast(event =>
       event.type === 'user-questions/state' && event.data.decision !== null)!
     await first.agent.whenIdle()
-    const recovered = await runtime([textResponse('Recovered execution.')], first.agent.session.events.slice(0, decision.seq + 1))
+    const recovered = await runtime([textResponse('Recovered execution.')], first.agent.session.snapshotEvents().slice(0, decision.seq + 1))
     expect(recovered.ctx.userQuestions.decide(recovered.agent, original.request.id, original.request.version, answer)).toBe(false)
     await recovered.agent.whenIdle()
     expect(recovered.model.requests).toHaveLength(1)
-    expect(recovered.agent.session.events.filter(event =>
+    expect(recovered.agent.session.snapshotEvents().filter(event =>
       event.type === 'user-questions/state' && event.data.decision !== null)).toHaveLength(1)
   })
 })

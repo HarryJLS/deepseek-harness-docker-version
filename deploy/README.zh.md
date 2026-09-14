@@ -19,7 +19,9 @@ kind: "deployment-reference"
 - [临时文件](#temporary-files)
 - [用户隔离](#user-isolation)
 - [表结构](#schema)
+- [保留数据](#retained-data)
 - [部署](#deployment)
+- [隔离验证](#isolated-verification)
 - [配置更新](#configuration-updates)
 - [运维限制](#operational-limits)
 
@@ -58,6 +60,8 @@ deployment:
     renewIntervalMs: 5000
     pollIntervalMs: 500
     maxQuestionBytes: 65536
+    uploadReceiptTtlMs: 172800000
+    assistantStateChunkBytes: 49152
 ```
 
 这些凭据用于随附的本地开发栈，生产环境应使用专用数据库账号。采用独立连接字段时，示例中的数据库字段均为必填项。条目缺失、Nacos 不可达、字段无效或数据库配置不完整都会在应用打开连接池之前阻止启动。数据库变更在容器重启后生效。
@@ -134,6 +138,17 @@ KV 删除属于软删除，后续写入可恢复该行。会话和附件读取�
 
 提供方检查既有表不需要 DDL 权限。有权限的角色可创建缺失的表，不兼容的既有表会产生明确的启动错误。修改 Nacos 数据库名之前，先备份旧库，进行运维审核的数据转换或创建新库。重新执行 `CREATE TABLE IF NOT EXISTS` 不会升级旧表。
 
+<a id="retained-data"></a>
+## 保留数据
+
+Docker 发行版使用相同的表、字段及索引存储当前 Session 记录。历史对话保留在原来的 `app` 值下作为归档；当前应用不转换、继续执行或展示这些对话。
+
+在这些表上启用全新部署时，先停止旧应用副本，并保留数据库备份及对应的 Nacos 配置。为所有新副本选择一个未使用的 `deployment.appName`，例如 `order-svc-v015`。数据库连接及 `DSH_NACOS_NAMESPACE` 保持不变。每个并行运行的副本仍需使用独立的 `snowflakeWorkerId`。仅在部署匹配版本时应用该配置；应用标识不会自动切换。
+
+新标识选择空的 Session 和应用 KV 状态，包括工作区注册信息，不修改归档行。存储在数据库中的应用状态需要重新配置；Nacos 管理的模型设置、凭据及插件条目仍在同一命名空间中。Redis 键也包含应用标识，因此保留的缓存不会向新部署提供旧 Session。
+
+保留数据不是新版 Web 界面中可浏览的归档。查看它需要旧版本及其应用标识。回退前先停止新副本，旧版本不得读取新应用的记录。临时附件文件可独立过期，数据库备份不会保留这些文件。
+
 <a id="deployment"></a>
 ## 部署
 
@@ -149,7 +164,20 @@ Web 应用监听 3080。本地 Nacos 控制台使用 8080，API 使用 8848，�
 
 默认运行时基础镜像为 `node:24-bookworm-slim`。如果本地只缓存了完整 Node 24 镜像，可使用构建参数 `--build-arg RUNTIME_BASE_IMAGE=node:24-bookworm`，不必更改应用或数据库配置。
 
+容器命令参数可提供额外的 `--patch <path>` 补丁层。入口程序将这些参数放在自动添加的应用级 `--no-open` 参数之前，并将带引号的路径保留为单个参数。
+
 运维环境变量只保留 Nacos 坐标、条目名、应用监听端口和可选的插件安装设置。数据库与 Redis 凭据和连接选项不属于 Compose 应用环境字段。模型 API key 放在 `dsh-credentials.yaml` 中，继承的模型密钥环境变量仍保留原有的只读优先级。
+
+<a id="isolated-verification"></a>
+## 隔离验证
+
+[双副本测试](../apps/cli/tests/profiles/docker/replicas.e2e.ts)需要 Docker Compose、已安装的工作区依赖、Playwright Chromium 以及本地构建的应用镜像。将 `DSH_DOCKER_TEST_IMAGE` 设置为该镜像后运行：
+
+```sh
+pnpm exec vitest run --config vitest.e2e.config.ts apps/cli/tests/profiles/docker/replicas.e2e.ts --retry 0
+```
+
+测试创建随机命名的 Compose 项目，独立运行 OceanBase、Redis、Nacos、模型 fixture 及两个应用副本。应用使用仅具 DML 权限的数据库账号；测试检查上传归属、跨副本流式回复、缓存恢复、容器替换后的确认操作，以及归档行和表定义保持不变。测试认证仅存在于代理 fixture 中，生产身份仍由可信平台提供。诊断文件保留在 `.artifacts/dsh-v3-*`；清理流程会删除该项目的容器和卷，失败后也会执行。测试不会操作既有应用服务，未选择镜像时会跳过。
 
 <a id="configuration-updates"></a>
 ## 配置更新

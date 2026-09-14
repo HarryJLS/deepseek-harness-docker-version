@@ -67,6 +67,8 @@ try {
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
+本包不发布运行时不变式伴生入口。握手顺序、推送确认和重连注册属于线协议观测，而非独立的 Cordis 自有关系。
+
 <details>
 <summary>实现细节</summary>
 

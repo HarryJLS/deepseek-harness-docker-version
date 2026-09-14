@@ -50,6 +50,8 @@ When a request carries an agent, `ask()` authenticates its exact identity throug
 <a id="role"></a>
 ## Role
 
+The service and runtime invariant are separate self-contained bundles. Their shared validators are stateless; both entries load from the published file inventory without a private generated chunk.
+
 Consumers such as `@deepseek-ai/dsh-tool-ask-user` use this service; the Web client supplies live answers through Remote Events or durable decisions through Session Controller. Pending durable questions block further tool execution and model steps until answered or dismissed. The loop's existing turn-conclusion mechanism ends the requesting turn.
 
 <a id="model-experience"></a>
@@ -78,3 +80,5 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 None.
 
 </details>
+
+**Runtime invariant:** No companion is published. The single provider slot is validated at registration and asks return directly to their caller; the seam publishes no independent request/answer audit stream.

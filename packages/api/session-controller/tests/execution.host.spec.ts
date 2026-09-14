@@ -4,6 +4,7 @@ import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ToolExecutionToken } from '@deepseek-ai/dsh-tools'
+import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import type { ApiSessionAgentController } from '../src/agent.ts'
 import { SessionExecutionController } from '../src/execution.ts'
 
@@ -26,10 +27,8 @@ async function bench(shared = true) {
   const releaseLease = vi.fn(async () => {})
   const acquire = vi.fn(async () => ({ signal: abort.signal, [Symbol.asyncDispose]: releaseLease }))
   const assertOwned = vi.fn(async () => {})
-  const ensureMaterialized = vi.fn(async () => {})
   ctx.provide('sessionPersistence', {
     ...(shared ? { sharedExecution: { acquire, assertOwned } } : {}),
-    ensureMaterialized,
   } as never)
   const flush = vi.fn(async () => {})
   ctx.on('session/flush', flush)
@@ -37,7 +36,7 @@ async function bench(shared = true) {
   const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
   const error = vi.spyOn(ctx.logger, 'error').mockImplementation(() => {})
   const controller = new SessionExecutionController(ctx, { release } as unknown as ApiSessionAgentController)
-  return { ctx, controller, agent, abort, acquire, assertOwned, releaseLease, release, flush, ensureMaterialized, warn, error }
+  return { ctx, controller, agent, abort, acquire, assertOwned, releaseLease, release, flush, warn, error }
 }
 
 afterEach(async () => {
@@ -56,7 +55,7 @@ describe('request-scoped session execution', () => {
   it('materializes and flushes before returning and releases idle lifecycles', async () => {
     const b = await bench()
     await expect(b.controller.run(id, async () => 'committed')).resolves.toBe('committed')
-    expect(b.ensureMaterialized).toHaveBeenCalledWith(b.agent.session)
+    expect(b.flush).toHaveBeenCalledWith(b.agent.session)
     expect(b.flush).toHaveBeenCalledTimes(2)
     expect(b.release).toHaveBeenCalledWith(id)
     expect(b.releaseLease).toHaveBeenCalledOnce()
@@ -66,9 +65,17 @@ describe('request-scoped session execution', () => {
     const b = await bench()
     b.acquire.mockRejectedValueOnce(reason)
     const operation = vi.fn(async () => {})
-    await expect(b.controller.run(id, operation)).rejects.toMatchObject({ failure: { code: 'agent-busy' } })
+    await expect(b.controller.run(id, operation)).rejects.toMatchObject({ code: 'session/agent-busy' })
     expect(operation).not.toHaveBeenCalled()
     expect(b.releaseLease).not.toHaveBeenCalled()
+  })
+
+  it('keeps an unauthorized or missing reservation as not-found without executing work', async () => {
+    const b = await bench()
+    b.acquire.mockRejectedValueOnce(new SessionPersistenceNotFoundError(id))
+    const operation = vi.fn(async () => {})
+    await expect(b.controller.run(id, operation)).rejects.toMatchObject({ code: 'session/not-found' })
+    expect(operation).not.toHaveBeenCalled()
   })
 
   it('keeps ownership until admitted background work becomes idle', async () => {
@@ -111,7 +118,7 @@ describe('request-scoped session execution', () => {
       b.abort.abort(new Error('ownership expired'))
       return 'unacknowledged'
     })).rejects.toThrow('ownership expired')
-    expect(b.ensureMaterialized).not.toHaveBeenCalled()
+    expect(b.flush).toHaveBeenCalledTimes(1)
     expect(b.releaseLease).toHaveBeenCalledOnce()
   })
 

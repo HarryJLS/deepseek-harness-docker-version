@@ -38,6 +38,8 @@ The server binds all interfaces on DSH_PORT, default 3080. Browser-token authent
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+No runtime invariant companion is published. This bundle contributes configuration, and the Loader verifies plugin resolution when the profile starts.
+
 <details>
 <summary>Implementation internals</summary>
 

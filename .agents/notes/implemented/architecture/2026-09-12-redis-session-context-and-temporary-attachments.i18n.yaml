@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-12-redis-session-context-and-temporary-attachments.md
-2026-09-12-redis-session-context-and-temporary-attachments.md: a171664b24dba3070faec4acfad54607f84512f9
-2026-09-12-redis-session-context-and-temporary-attachments.zh.md: 5903f11f987713f9e2de9b33a39eff4289194966
+2026-09-12-redis-session-context-and-temporary-attachments.md: 1032829e9b2bcf8ea319b8cfad9af4577e7237a4
+2026-09-12-redis-session-context-and-temporary-attachments.zh.md: fdfdf5895ff221fba43736a916b86d0d367257e0

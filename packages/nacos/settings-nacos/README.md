@@ -54,6 +54,8 @@ See [shared connection fields](../nacos-client/README.md#connection-fields) and 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+No runtime invariant companion is published. The settings service owns in-process snapshot commits; Nacos reads, writes, and pushed updates require remote integration observations.
+
 <details>
 <summary>Implementation internals</summary>
 

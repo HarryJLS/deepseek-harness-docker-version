@@ -54,6 +54,8 @@ kind: "package-reference"
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
+本包不发布运行时不变式伴生入口。设置服务负责进程内快照提交，Nacos 读取、写入与推送更新需要远程集成观测。
+
 <details>
 <summary>实现细节</summary>
 

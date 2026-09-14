@@ -8,7 +8,9 @@
     "src"
   ],
   "references": [
-    { "path": "../../identity/user-context" },
+    {
+      "path": "../../identity/user-context"
+    },
     {
       "path": "../../../vendor/cosmokit"
     },
@@ -20,9 +22,6 @@
     },
     {
       "path": "../storage"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
     },
     {
       "path": "../../util/mysql-schema"

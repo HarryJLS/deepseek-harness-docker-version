@@ -57,6 +57,8 @@ Instruction changes are consumed through the [instruction plugin's baseline and 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+No runtime invariant companion is published. Document-to-file publication requires filesystem observations; the plugin has no separate Cordis state to compare with the written bytes.
+
 <details>
 <summary>Implementation internals</summary>
 

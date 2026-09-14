@@ -18,7 +18,7 @@ Reservations occupy small rows in the existing application-scoped KV table. Data
 
 Workspace metadata uses short MySQL unit transactions. Each mutation refreshes an isolated domain snapshot while the application/unit row is locked; all record and order changes commit together before cache publication. Workspace lookups and streams refresh committed state across replicas, including newly created workspaces and concurrent session attachments. This avoids requiring a process restart merely to enter the confirmation workflow.
 
-Questions retain JSON text, choices, identity, and version. Files remain in the deployment's shared temporary filesystem; the context carries references, not binary objects. Redis retains its bounded per-event cache and two-day default TTL. The [Redis decision](2026-09-12-redis-session-context-and-temporary-attachments.md) remains authoritative for cache publication, authorization, chunking, and temporary attachments. The [plan-review presentation decision](../feature/2026-07-30-plan-review-presentation-intent.md) remains authoritative for the existing card and answer encoding.
+Questions retain JSON text, choices, identity, and version. Files remain in the deployment's shared temporary filesystem; the context carries references, not binary objects. Redis retains its bounded per-event cache and two-day default TTL. The [Redis decision](2026-09-12-redis-session-context-and-temporary-attachments.md) owns cache publication, authorization, chunking, and temporary attachments. The [question UI](../../../../packages/client/ui-user-questions/README.md) defines the card and answer encoding.
 
 ## Alternatives considered
 

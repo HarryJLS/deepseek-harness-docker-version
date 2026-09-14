@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-06-oceanbase-user-ownership.md
-2026-09-06-oceanbase-user-ownership.md: 45bd0e12eb718e8ad322063ab71576ab97ce4fb1
-2026-09-06-oceanbase-user-ownership.zh.md: 75cd503723b9086ecfa75e1c5146bc2564ef9469
+2026-09-06-oceanbase-user-ownership.md: f271f4dd28f6e5581565d07db560c17f29528144
+2026-09-06-oceanbase-user-ownership.zh.md: d6ca3a8b857e4f4b5c6e4b0f75c8ef8873aa58f3

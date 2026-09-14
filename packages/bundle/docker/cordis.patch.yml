@@ -111,11 +111,9 @@
 # That is the state a container can least afford to lose: a replaced replica
 # must still resume what a user was in the middle of.
 #
-# The database backend drives the same shared persistence coordinator as the
-# JSONL and SQLite ones, so every semantic — crash repair, live adoption,
-# preparation reuse — is unchanged; only the medium moves. It is additionally
-# seek-capable, so a projection resuming from a watermark reads only the
-# suffix rather than the whole log.
+# Database-backed Session handles provide current-format reads, ordered
+# appends, and flush/close drain. Shared execution reservations fence writers;
+# history observers page committed events without activating an Agent.
 - id: session-persistence-jsonl
   disabled: true
 
@@ -124,8 +122,8 @@
       name: '@deepseek-ai/dsh-session-persistence-mysql'
       config: !!js |
         (() => {
-          const { leaseMs, renewIntervalMs, pollIntervalMs } = JSON.parse(process.env.DSH_EXECUTION_CONFIG)
-          return { ...JSON.parse(process.env.DSH_DATABASE_SECRET), app: process.env.DSH_APP_NAME, redis: JSON.parse(process.env.DSH_REDIS_SECRET), execution: { leaseMs, renewIntervalMs, pollIntervalMs } }
+          const { leaseMs, renewIntervalMs, pollIntervalMs, uploadReceiptTtlMs, assistantStateChunkBytes } = JSON.parse(process.env.DSH_EXECUTION_CONFIG)
+          return { ...JSON.parse(process.env.DSH_DATABASE_SECRET), app: process.env.DSH_APP_NAME, redis: JSON.parse(process.env.DSH_REDIS_SECRET), execution: { leaseMs, renewIntervalMs, pollIntervalMs }, uploadReceiptTtlMs, assistantStateChunkBytes }
         })()
 
 - id: user-questions

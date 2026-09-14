@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-13-durable-web-confirmation.md
-2026-09-13-durable-web-confirmation.md: 8b539ad5a9abf47991cb3b7069e247966f164560
-2026-09-13-durable-web-confirmation.zh.md: ef10ed9829b02fc314291c7b42d48934e4da3c93
+2026-09-13-durable-web-confirmation.md: f9bb9e9e4359389e94df86b7cc6ca8c429340884
+2026-09-13-durable-web-confirmation.zh.md: 2fc6fc80832f8a60b6267a4ef58453913ca8db5b

@@ -22,9 +22,6 @@
     },
     {
       "path": "../../credentials/credentials"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
     }
   ]
 }

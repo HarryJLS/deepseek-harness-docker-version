@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SessionStore, { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import SessionStore, { Session, SessionId, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { MessageId, ToolCallId } from '@deepseek-ai/dsh-llm'
 import Invariants from '@deepseek-ai/dsh-invariants'
 import type { UserQuestionId, UserQuestionState } from '../src/types.ts'
@@ -34,7 +34,7 @@ function decided(answer: 'Approve' | 'Reject' | null = 'Approve', approvedPlan =
 }
 
 function event(seq: number, data: UserQuestionState): SessionEvent {
-  return { type: 'user-questions/state', seq, time: seq, data }
+  return { type: 'user-questions/state', seq: SessionSeq(seq), time: seq, data }
 }
 
 async function setup(mount = true) {
@@ -64,10 +64,10 @@ describe('durable question invariants', () => {
     existing.append('user-questions/state', pending())
     existing.append('user-questions/state', decided())
     await ctx.plugin(companion)
-    const seed = Session.create(SessionId('seeded'), [...existing.events])
+    const seed = Session.create(SessionId('seeded'), existing.snapshotEvents())
     expect(() =>{  ctx.emit('session/created', seed) }).not.toThrow()
     expect(() =>{  ctx.emit('session/event', seed, {
-      type: 'plan/mode', seq: 2, time: 2, data: { active: false },
+      type: 'plan/mode', seq: SessionSeq(2), time: 2, data: { active: false },
     }) }).not.toThrow()
     expect(() =>{  ctx.emit('session/event', seed, event(3, { pending: null, decision: null })) }).not.toThrow()
   })

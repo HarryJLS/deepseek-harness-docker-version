@@ -3,8 +3,9 @@
     - 'button "Plan a small change: add" [disabled]'
   - img
   - text: Standard mode
-  - button "Session log":
-    - text: Session log
+  - button "More actions":
+    - img
+  - button "Open right sidebar":
     - img
   - tablist:
     - tab "Chat" [selected]
@@ -41,10 +42,6 @@
   - text: Thought for a while
   - img
 - paragraph: DURABLE_DONE
-- button "Turn usage 8.5K tok · Cache hit 3%":
-  - img
-  - img
-  - text: Turn usage 8.5K tok · Cache hit 3%
 - button "Copy":
   - img
 - button "Good response":
@@ -53,9 +50,17 @@
   - img
 - button "Branch into a new conversation":
   - img
-- text: {{clock}} Ran for {{duration}} TTFT {{duration}} {{throughput}} tok/s
-- textbox "Message or run a task... / commands, @ files or sessions"
+- button "Usage 8.5K tok":
+  - img
+  - text: Usage 8.5K tok
+- button "Ran for {{duration}}":
+  - img
+  - text: Ran for {{duration}}
+- text: {{clock}}
+- textbox "Message or run a task, / commands, @ files or sessions"
 - button "Commands":
+  - img
+- button "Add attachment":
   - img
 - 'button "Access mode, current: Workspace Write"': Workspace Write
 - button "Select model, current DeepSeek-V4-Flash":
@@ -63,4 +68,9 @@
   - img
 - button "7% of context used"
 - button "Send message" [disabled]
-- text: 2 turns · 2 steps LLM {{duration}} · Tool call {{duration}} TTFT avg {{duration}} · {{throughput}} tok/s Cache hit 2% Input 17K tok · Output 392 tok
+- button "2 turns 2 steps · {{throughput}} tok/s":
+  - img
+  - text: 2 turns 2 steps{{throughput}} tok/s
+- button "17.4K tok · Cache hit 2%":
+  - img
+  - text: 17.4K tokCache hit 2%

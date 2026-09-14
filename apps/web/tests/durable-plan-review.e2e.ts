@@ -91,13 +91,13 @@ describe('web e2e: durable plan review', () => {
     const decided = scaffold.ctx.userQuestions.state(agent).decision!
     expect(decided.id).toBe(pending.id)
     expect(decided.approvedPlan).toBe(true)
-    expect(agent.session.events.filter(event => event.type === 'turn/start')).toHaveLength(2)
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'turn/start')).toHaveLength(2)
     const duplicate = await scaffold.ctx.sessionController.answerQuestion({
       sessionId, id: pending.id, version: pending.version,
       answer: { answers: [{ id: 'plan-review', selected: ['Approve'] }] },
     })
     expect(duplicate.duplicate).toBe(true)
-    expect(agent.session.events.filter(event => event.type === 'turn/start')).toHaveLength(2)
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'turn/start')).toHaveLength(2)
     if (MODE === 'record') {
       await recordFixture(scaffold, sessionId, FIXTURE)
     } else {

@@ -15,4 +15,5 @@ node /usr/local/bin/prepare-profile.mjs
 DSH_RESOLVED_ENV="${DSH_RESOLVED_ENV:-/run/dsh-resolved.env}"
 . "${DSH_RESOLVED_ENV}"
 
-exec node "${DSH_BIN}" --profile "${DSH_PROFILE}" --no-open "$@"
+# The launcher stops parsing its flags at the first application flag.
+exec node "${DSH_BIN}" --profile "${DSH_PROFILE}" "$@" --no-open

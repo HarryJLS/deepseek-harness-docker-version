@@ -76,7 +76,10 @@ function resolveExecution(source = {}) {
   if (source === null || typeof source !== 'object' || Array.isArray(source)) {
     throw new Error('entrypoint: deployment.execution must be a mapping in Nacos')
   }
-  const defaults = { leaseMs: 30000, renewIntervalMs: 5000, pollIntervalMs: 500, maxQuestionBytes: 65536 }
+  const defaults = {
+    leaseMs: 30000, renewIntervalMs: 5000, pollIntervalMs: 500, maxQuestionBytes: 65536,
+    uploadReceiptTtlMs: 172800000, assistantStateChunkBytes: 49152,
+  }
   if (Object.keys(source).some(key => !Object.hasOwn(defaults, key))) {
     throw new Error('entrypoint: unknown deployment.execution field')
   }
@@ -84,6 +87,7 @@ function resolveExecution(source = {}) {
   for (const [key, min, max] of [
     ['leaseMs', 3000, 300000], ['renewIntervalMs', 100, 100000],
     ['pollIntervalMs', 100, 10000], ['maxQuestionBytes', 1024, 4194304],
+    ['uploadReceiptTtlMs', 1000, 2147483647], ['assistantStateChunkBytes', 1024, 786432],
   ]) {
     if (!Number.isSafeInteger(config[key]) || config[key] < min || config[key] > max) {
       throw new Error(`entrypoint: invalid deployment.execution.${key}`)

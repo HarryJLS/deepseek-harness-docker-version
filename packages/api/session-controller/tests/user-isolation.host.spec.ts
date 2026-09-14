@@ -66,11 +66,11 @@ describe('platform session ownership', () => {
       await withUser(bob, async () => {
         expect(() => controller.inspect(id)).toThrow('not found')
         await expect(controller.page({ address: { kind: 'session', sessionId: id }, throughSeq: -1 }, new AbortController().signal))
-          .rejects.toMatchObject({ failure: { code: 'session-not-found' } })
+          .rejects.toMatchObject({ code: 'session/not-found' })
         const iterator = controller.follow({ address: { kind: 'session', sessionId: id } }, new AbortController().signal)[Symbol.asyncIterator]()
-        await expect(iterator.next()).rejects.toMatchObject({ failure: { code: 'session-not-found' } })
-        await expect(controller.create({ sessionId: id, cwd: '/tmp' })).rejects.toMatchObject({ failure: { code: 'session-not-found' } })
-        await expect(controller.resolveAgent(id)).resolves.toMatchObject({ error: { code: 'session-not-found' } })
+        await expect(iterator.next()).rejects.toMatchObject({ code: 'session/not-found' })
+        await expect(controller.create({ sessionId: id, cwd: '/tmp' })).rejects.toMatchObject({ code: 'session/not-found' })
+        await expect(controller.resolveAgent(id)).resolves.toMatchObject({ error: { code: 'session/not-found' } })
         await expect(controller.cancel({ sessionId: id })).rejects.toThrow('not found')
       })
     } finally { await ctx.fiber.dispose() }
@@ -78,7 +78,7 @@ describe('platform session ownership', () => {
 
   it('rejects a cold ownership mismatch even when persistence returns a cached inspection', async () => {
     const { ctx, controller } = await harness()
-    const header: SessionHeader = { id: SessionId('private-cold'), version: 0, createdAt: 1, cwd: '/tmp', userId: alice }
+    const header: SessionHeader = { id: SessionId('private-cold'), version: 3, isSeeded: false, createdAt: 1, cwd: '/tmp', userId: alice }
     ctx.provide('sessionPersistence', testSessionPersistence(ctx, {
       list: async () => [header],
       inspect: async () => ({ meta: header, events: [] }),
@@ -88,7 +88,7 @@ describe('platform session ownership', () => {
         expect((await controller.list({}, new AbortController().signal)).items).toEqual([])
         await expect(controller.inspect(header.id)).rejects.toThrow('not found')
         await expect(controller.create({ sessionId: header.id, cwd: '/tmp' }))
-          .rejects.toMatchObject({ failure: { code: 'session-not-found' } })
+          .rejects.toMatchObject({ code: 'session/not-found' })
       })
       await withUser(alice, async () => {
         expect((await controller.inspect(header.id)).meta.userId).toBe(alice)

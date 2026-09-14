@@ -40,6 +40,8 @@ MySQL 存储、会话与附件提供方共用的辅助库。此库不创建连�
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
+本包不发布运行时不变式伴生入口。提供方通过数据库检查表结构和行归属，这些辅助函数没有独立的 Cordis 注册表或事件流。
+
 <details>
 <summary>实现细节</summary>
 

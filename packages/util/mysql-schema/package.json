@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-mysql-schema",
   "description": "Shared MySQL/OceanBase connection, table-prefix, and provisioning vocabulary for the DeepSeek Harness",
-  "version": "0.1.2-alpha.1",
+  "version": "0.1.5-rc.2",
   "publishConfig": {
     "access": "public"
   },
@@ -18,29 +18,23 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./invariant": {
-      "types": "./lib/types/invariant.d.ts",
-      "default": "./lib/invariant.js"
-    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
-    "lib/invariant.js",
     "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
-    "@deepseek-ai/dsh-invariants": "workspace:^"
+    "@deepseek-ai/dsh-user-context": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
-    "@deepseek-ai/dsh-invariants": "workspace:^"
+    "@deepseek-ai/dsh-user-context": "workspace:^"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-user-context": "workspace:^",
     "@sapphire/snowflake": "^3.5.5",
     "@deepseek-ai/schemastery": "workspace:^"
   }

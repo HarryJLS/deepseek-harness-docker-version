@@ -17,7 +17,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
-import { questionState, questionStateSchema, validateQuestionAnswer } from './durable.ts'
+import { questionStateSchema, validateQuestionAnswer } from './durable.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -36,6 +36,7 @@ export type {
   AskUserQuestionOption,
   DurableUserQuestion, UserQuestionDecision, UserQuestionId, UserQuestionState,
 } from './types.ts'
+export { questionStateSchema, validateQuestionAnswer } from './durable.ts'
 
 /** Human-question delivery and retained payload limits. */
 export interface Config {
@@ -119,18 +120,23 @@ export class UserQuestionService extends Service {
       if (decision.kind === 'reject' || state.decision === null) return decision
       const message = this.decisionMessage(state.decision)
       if (decision.messages.some(item => item.id === message.id)
-        || agent.session.events.some(event => event.type === 'user/message' && event.data.id === message.id)) return decision
+        || agent.session.snapshotEvents().some(event => event.type === 'user/message' && event.data.id === message.id)) return decision
       return { ...decision, messages: [message, ...decision.messages] }
     })
   }
 
   /**
-   * Read question state from the exact agent's session log.
+   * Read the incremental question projection for the exact agent's session.
    * @param agent - agent whose question state is requested.
    * @returns the current pending request and most recent decision.
    */
   state(agent: Agent): UserQuestionState {
-    return questionState(agent.session.events)
+    if (!this.durable) return { pending: null, decision: null }
+    const projections = this.ctx.get('sessionProjections')
+    if (projections === undefined) throw new Error('Durable questions require sessionProjections.')
+    const state = projections.stateOf(agent.session, 'userQuestions')
+    if (state === undefined) throw new Error('Durable questions require the userQuestions projection.')
+    return state
   }
 
   /**
@@ -177,7 +183,8 @@ export class UserQuestionService extends Service {
    */
   decide(agent: Agent, id: UserQuestionId, version: number, answer: AskUserQuestionAnswer | null): boolean {
     this.assertSize(answer)
-    const prior = agent.session.events.findLast(event =>
+    const events = agent.session.snapshotEvents()
+    const prior = events.findLast(event =>
       event.type === 'user-questions/state' && event.data.decision?.id === id)?.data
     if (prior !== undefined) {
       const decision = (prior as UserQuestionState).decision
@@ -185,7 +192,7 @@ export class UserQuestionService extends Service {
         const state = this.state(agent)
         const message = this.decisionMessage(decision)
         if (agent.status === 'idle' && answer !== null && state.pending === null && state.decision?.id === id
-          && !agent.session.events.some(event => event.type === 'user/message' && event.data.id === message.id)) {
+          && !events.some(event => event.type === 'user/message' && event.data.id === message.id)) {
           agent.inbox.remove(message.id)
           agent.followup(message)
         }

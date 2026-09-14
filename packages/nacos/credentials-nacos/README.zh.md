@@ -68,6 +68,8 @@ records:
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
+本包不发布运行时不变式伴生入口。凭据服务负责进程内更新，远程文档传播与环境变量优先级需要集成观测。
+
 <details>
 <summary>实现细节</summary>
 

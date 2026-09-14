@@ -50,6 +50,8 @@ kind: "package-reference"
 <a id="role"></a>
 ## 职责
 
+服务与运行时不变式分别打包为自包含入口。两者共享的校验器没有可变状态，每个入口都可从发布文件清单中加载，无须额外的私有生成代码块。
+
 `@deepseek-ai/dsh-tool-ask-user` 等 Consumer 使用此服务；Web Client 通过 Remote Events 提供实时回答，或通过 Session Controller 提交持久化决定。待回答的持久化问题阻止进一步工具执行和模型步骤，直到被回答或关闭。循环已有的本轮结束机制负责结束提问轮次。
 
 <a id="model-experience"></a>
@@ -78,3 +80,5 @@ kind: "package-reference"
 无。
 
 </details>
+
+**运行时不变式：** 不发布伴生入口。单个 provider slot 在注册时校验，ask 结果直接返回调用方；该 seam 不发布独立 request/answer 审计流。

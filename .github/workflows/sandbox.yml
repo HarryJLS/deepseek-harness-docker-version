@@ -65,8 +65,8 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq musl-tools
-          pnpm --dir native/landlock-run run build:ts
-          pnpm --dir native/landlock-run run build:native
+          pnpm --dir native/system run build:ts
+          pnpm --dir native/system run build:native
 
       - name: Unit tests (Linux)
         if: matrix.runner == 'bwrap'
@@ -83,10 +83,11 @@ jobs:
         env:
           NO_COLOR: 1
         run: |
-          set -u +e -o pipefail
+          set -euo pipefail
+          status=0
           out=$(pnpm exec vitest run --config vitest.e2e.config.ts \
             packages/sandbox/sandbox-local/tests/${{ matrix.runner }}.e2e.ts \
-            packages/shell/bash-sandbox/tests/${{ matrix.runner }}.e2e.ts 2>&1); status=$?
+            packages/shell/bash-sandbox/tests/${{ matrix.runner }}.e2e.ts 2>&1) || status=$?
           echo "$out"
           [ "$status" -eq 0 ]
           # Both platform files must have RUN — a self-skip (runner missing on
@@ -105,9 +106,10 @@ jobs:
         env:
           NO_COLOR: 1
         run: |
-          set -u +e -o pipefail
+          set -euo pipefail
+          status=0
           out=$(pnpm exec vitest run --config vitest.e2e.config.ts \
-            packages/sandbox/sandbox-local/tests/packed-install.e2e.ts 2>&1); status=$?
+            packages/sandbox/sandbox-local/tests/packed-install.e2e.ts 2>&1) || status=$?
           echo "$out"
           [ "$status" -eq 0 ]
           echo "$out" | grep -qE 'Test Files[[:space:]]+1 passed \(1\)'

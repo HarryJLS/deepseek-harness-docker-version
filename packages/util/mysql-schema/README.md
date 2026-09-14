@@ -40,6 +40,8 @@ Providers probe existing tables before issuing DDL. Existing tables must pass au
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+No runtime invariant companion is published. Providers check schema and row ownership against the database; these helpers own no independent Cordis registry or event stream.
+
 <details>
 <summary>Implementation internals</summary>
 

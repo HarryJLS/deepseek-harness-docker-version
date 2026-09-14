@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionSeq, SessionLogOffset, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
 import { SessionHistoryController } from '../src/history.ts'
 
@@ -22,15 +22,19 @@ describe('shared history projections', () => {
     const ctx = new Context()
     await ctx.plugin(SessionProjections)
     const id = SessionId('shared-history')
-    const meta: SessionHeader = { id, version: 0, cwd: '/tmp', createdAt: 0 }
+    const meta: SessionHeader = { id, version: 3, isSeeded: false, cwd: '/tmp', createdAt: 0 }
     const events: SessionEvent[] = [
-      { type: 'turn/start', seq: 0, time: 0, data: { turn: 1 } },
-      { type: 'turn/end', seq: 1, time: 1, data: { turn: 1, reason: { kind: 'completed' } } },
-      { type: 'plan/mode', seq: 2, time: 2, data: { active: true } },
+      { type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } },
+      { type: 'turn/end', seq: SessionSeq(1), time: 1, data: { turn: 1, reason: { kind: 'completed' } } },
+      { type: 'plan/mode', seq: SessionSeq(2), time: 2, data: { active: true } },
     ]
-    const readFrom = vi.fn(async (_id: SessionId, from: number) => ({ meta, events: events.slice(from) }))
+    const read = vi.fn(async (from: number = 0) => ({ eventState: 'detached', events: events.slice(from) }))
     ctx.provide('sessionPersistence', {
-      readFrom, sharedExecution: { pollIntervalMs: 100, active: async () => false },
+      open: async () => ({
+        header: meta, inheritedEventCount: SessionLogOffset(0), read,
+        [Symbol.asyncDispose]: async () => {},
+      }),
+      sharedExecution: { pollIntervalMs: 100, active: async () => false },
     } as never)
     const history = new SessionHistoryController(ctx, () => { throw new Error('read-only history must not activate') })
     const abort = new AbortController()
@@ -48,7 +52,7 @@ describe('shared history projections', () => {
       expect((await updated).value).toMatchObject({
         type: 'state', projections: { asOfSeq: 2, values: { 'test/shared-late': 3 } },
       })
-      expect(readFrom.mock.calls.filter(([, from]) => from === 0)).toHaveLength(2)
+      expect(read.mock.calls.filter(([from]) => from === 0)).toHaveLength(2)
       remove()
       const cleared = stream.next()
       await vi.advanceTimersByTimeAsync(100)

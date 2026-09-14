@@ -18,7 +18,7 @@ MySQL 持久化提供方暴露可选的共享执行功能。会话 API 修改与
 
 工作区元数据使用短时间 MySQL 单元事务。每次修改在锁定应用与单元记录时刷新隔离的领域快照，所有记录与顺序变化在缓存发布前一并提交。工作区查找和事件流跨副本刷新已提交状态，包括新建工作区和并发会话关联，避免仅为进入确认流程就必须重启进程。
 
-问题保留 JSON 文本、选项、标识与版本。文件留在部署的共享临时文件系统中，上下文携带引用而非二进制对象。Redis 保留有界逐事件缓存和默认两天 TTL。[Redis 决策](2026-09-12-redis-session-context-and-temporary-attachments.zh.md) 继续负责缓存发布、授权、分块与临时附件，[方案审核呈现决策](../feature/2026-07-30-plan-review-presentation-intent.zh.md) 继续负责原有卡片与回答编码。
+问题保留 JSON 文本、选项、标识与版本。文件留在部署的共享临时文件系统中，上下文携带引用而非二进制对象。Redis 保留有界逐事件缓存和默认两天 TTL。[Redis 决策](2026-09-12-redis-session-context-and-temporary-attachments.zh.md)负责缓存发布、授权、分块与临时附件，[问题 UI](../../../../packages/client/ui-user-questions/README.zh.md)定义卡片与回答编码。
 
 ## 考虑过的替代方案
 

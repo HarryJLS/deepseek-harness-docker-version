@@ -9,9 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Delivery is selected by `userQuestions`: the default live mode waits for an answerer, while durable mode records the question and ends the turn for a later Session Controller decision. The live exchange described below remains the default outside the Docker deployment.
-
-`dsh-tool-ask-user` gives the model one tool — `ask_user_question` — for asking the human a concise question when it needs confirmation, a choice, or missing information before continuing. The tool pauses until the first scoped answerer accepts the request, then feeds that answer back into the agent loop as an ordinary tool result, so no loop mechanics change. The tool returns the canonical `{ answers: [...] }` shape, rendered as compact JSON text. It renders no UI itself and does not know how input is collected; the Web client contributes its answerer through Remote Events. A runtime-owned child agent cannot ask the user; it must include the unresolved question in its final result.
+`ask_user_question` asks humans for confirmation, a choice, or missing information. Live delivery waits for accepted answers and returns compact JSON; durable delivery records pending questions and ends the turn for a later decision. A missing live answerer or cancelled live call returns an error. Runtime-owned child agents cannot call this tool and must report unresolved questions in their final result. The package needs a compatible user interaction surface; it does not render or collect input.
 
 ## Table of Contents
 
@@ -27,7 +25,9 @@ Delivery is selected by `userQuestions`: the default live mode waits for an answ
 <a id="use-this-package"></a>
 ## Use this package
 
-Compose this plugin wherever the model should be able to pause for a human decision: it provides the `ask_user_question` tool and needs the `ctx.userQuestions` seam with an answerer that accepts the scoped request. Without one, the tool call fails with an error instead of degrading.
+Delivery is selected by `userQuestions`: the default live mode waits for an answerer, while durable mode records the question and ends the turn for a later Session Controller decision. The live exchange described below remains the default outside the Docker deployment.
+
+Compose this plugin wherever the model should be able to pause for a human decision. It provides `ask_user_question` through `ctx.userQuestions`. Live delivery requires an answerer that accepts the scoped request; without one, the tool call returns an error.
 
 ### When to call the tool
 
@@ -76,7 +76,7 @@ The observable behavior is covered in [Use this package](#use-this-package); thi
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Tool registration: `ask_user_question` schema, execute path, result render |
-| [`src/invariant.ts`](src/invariant.ts) | Invariant companion (no runtime invariant; the seam owns execution relations) |
+| — | No runtime invariant companion is published; this model-facing adapter has no independent lifecycle stream; execution relations are owned by the capability seam it calls. |
 
 ### Consumer role
 

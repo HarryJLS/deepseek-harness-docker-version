@@ -107,6 +107,25 @@ describe('Remote event Host source', () => {
       value: { event: 'settings/document-updated', args: ['ui-theme', 1] },
     })
 
+    emitRaw(ctx, 'goal/activation-changed', [{
+      sessionId: 'session-1',
+      goal: { id: 'goal-1', revision: 1, activation: 'disarmed' },
+    }])
+    await expect(first.next()).resolves.toEqual({
+      done: false,
+      value: {
+        event: 'goal/activation-changed',
+        args: [{ sessionId: 'session-1', goal: { id: 'goal-1', revision: 1, activation: 'disarmed' } }],
+      },
+    })
+    await expect(second.next()).resolves.toEqual({
+      done: false,
+      value: {
+        event: 'goal/activation-changed',
+        args: [{ sessionId: 'session-1', goal: { id: 'goal-1', revision: 1, activation: 'disarmed' } }],
+      },
+    })
+
     const firstDone = first.next()
     firstAbort.abort(new Error('first Client disconnected'))
     emitRaw(ctx, 'commands/change', [])
@@ -157,9 +176,17 @@ describe('Remote event Host source', () => {
     const abort = new AbortController()
     const iterator = sourceOf(gateway)(abort.signal)[Symbol.asyncIterator]()
     const agentCtx = ctx.extend()
-    const agent = { ctx: agentCtx, session: ctx.sessions.create(undefined, { meta: userId === undefined ? {} : { userId } }) }
+    const agent = { id: 'agent-1', ctx: agentCtx, session: ctx.sessions.create(undefined, { meta: userId === undefined ? {} : { userId } }) }
     const target = scopeTarget(ctx, agent)
     const request = { questions: [], agent }
+
+    await expect(async () => waterfallRaw(
+      ctx,
+      target,
+      'user-questions/request',
+      [{ questions: [], agent: { id: 'agent-2', ctx: ctx.extend() } }],
+      () => Promise.resolve('host fallback'),
+    )).rejects.toThrow('must carry its Agent directly')
 
     const claimed = withUser(parseUserId('request-user'), () => waterfallRaw(
       ctx,
@@ -173,7 +200,7 @@ describe('Remote event Host source', () => {
       userId: userId ?? DEFAULT_USER_ID,
       event: 'user-questions/request',
       request,
-      context: { value: agentCtx, subject: agent },
+      context: { value: agentCtx, subject: agent, agentId: 'agent-1' },
     })
     claimedDispatch.resolve({ kind: 'result', value: 'client answer' })
     await expect(claimed).resolves.toBe('client answer')
@@ -215,7 +242,7 @@ describe('Remote event Host source', () => {
     const abort = new AbortController()
     const iterator = sourceOf(gateway)(abort.signal)[Symbol.asyncIterator]()
     const delivery = iterator.next()
-    const agent = { ctx: ctx.extend(), session: ctx.sessions.create() }
+    const agent = { id: 'agent-1', ctx: ctx.extend(), session: ctx.sessions.create() }
     const reason = new Error('forwarded event source removed')
     const pending = waterfallRaw(
       ctx,

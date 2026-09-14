@@ -67,6 +67,8 @@ A long-lived provider keeps the document open until disposal. Writes re-read the
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+No runtime invariant companion is published. Handshake ordering, push acknowledgements, and reconnect registration are wire-protocol observations rather than a separate Cordis-owned relation.
+
 <details>
 <summary>Implementation internals</summary>
 

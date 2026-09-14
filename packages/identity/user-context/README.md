@@ -25,6 +25,8 @@ This library carries a platform user identity through asynchronous Host operatio
 <a id="use-this-package"></a>
 ## Use this package
 
+Host consumers of request-scope helpers declare this package as a shared peer dependency. Separate installed copies own separate `AsyncLocalStorage` instances: a data reader using another copy sees an unscoped operation instead of the identity admitted by HTTP or WebSocket ingress.
+
 `parseUserId` accepts one case-sensitive identifier of at most 32 characters. Missing, null, and empty external values resolve to `-`; padded strings, control characters, commas, and non-string values are rejected. `withUser` scopes one operation and its asynchronous descendants. `userScopedIterable` retains the admitting identity across lazy iteration and cleanup.
 
 `requestUserId` distinguishes a request from unscoped Host maintenance. `currentUserId` supplies the audit actor, using `-` outside requests. `canAccessUser` permits a scoped request only when its identity matches the durable owner; metadata without an owner belongs to `-`. Unscoped Host maintenance can enumerate all owners, so request handlers must never clear their scope to return unrestricted data.
@@ -33,6 +35,8 @@ This library carries a platform user identity through asynchronous Host operatio
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
+
+No runtime invariant companion is published. Request identity exposes no Cordis event stream; consumers verify the relation between that identity and durable ownership.
 
 <details>
 <summary>Implementation internals</summary>

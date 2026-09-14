@@ -78,7 +78,8 @@ describe.skipIf(url === undefined)('shared workspace metadata', () => {
       const lease = await ctx.sessionPersistence.sharedExecution!.acquire(id)
       try {
         const session = ctx.sessions.create(id, { meta: { cwd: directory } })
-        await ctx.sessionPersistence.ensureMaterialized(session)
+        await using handle = await ctx.sessionPersistence.create(session.header)
+        await handle.flush()
         await ctx.workspaceRegistry.get(workspaceId)!.attachSession(id)
         return id
       } finally { await lease[Symbol.asyncDispose]() }

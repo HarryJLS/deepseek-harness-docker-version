@@ -8,6 +8,7 @@
     "src"
   ],
   "references": [
+    { "path": "../../runtime-diagnostics/invariants" },
     { "path": "../../../vendor/schemastery" },
     { "path": "../../util/brand" },
     { "path": "../../core/session" },
@@ -25,9 +26,6 @@
     },
     {
       "path": "../../llm/llm"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
     }
   ]
 }

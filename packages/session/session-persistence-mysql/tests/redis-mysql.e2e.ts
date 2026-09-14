@@ -4,7 +4,8 @@ import mysql from 'mysql2/promise'
 import { Redis } from 'ioredis'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { resolveMysqlPool } from '@deepseek-ai/dsh-mysql-schema'
-import { SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { storedAttempt as event } from './events.ts'
 import { parseUserId, withUser } from '@deepseek-ai/dsh-user-context'
 import { MysqlSessionStore } from '../src/store.ts'
 import { RedisSessionCache } from '../src/redis-cache.ts'
@@ -25,11 +26,7 @@ describe.skipIf(mysqlUrl === undefined || redisUrl === undefined)('Redis and Oce
   let reader: MysqlSessionStore
 
   const header = (): SessionHeader => ({
-    id: SessionId(randomUUID()), userId: alice, version: 0, createdAt: Date.now(), cwd: '/tmp',
-  })
-  const event = (seq: number, text = 'recorded text'): SessionEvent => ({
-    type: 'assistant/chunk', seq, time: Date.now(),
-    data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text } },
+    id: SessionId(randomUUID()), userId: alice, version: 3, isSeeded: false, createdAt: Date.now(), cwd: '/tmp',
   })
 
   async function keys(): Promise<string[]> {
@@ -149,7 +146,7 @@ describe.skipIf(mysqlUrl === undefined || redisUrl === undefined)('Redis and Oce
       "UPDATE dsh_session_event SET is_deleted = 'Y' WHERE app = ? AND session_id = ? AND seq = 1",
       [app, meta.id],
     )
-    expect((await reader.loadStored(meta.id))?.events).toEqual([events[0], events[2]])
+    await expect(reader.loadStored(meta.id)).rejects.toThrow('noncontiguous committed log')
     await writerPool.query("UPDATE dsh_session SET is_deleted = 'Y' WHERE app = ? AND session_id = ?", [app, meta.id])
     expect(await reader.loadStored(meta.id)).toBeUndefined()
   })

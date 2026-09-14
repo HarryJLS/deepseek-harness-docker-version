@@ -14,6 +14,8 @@ Docker 仓库部署在 Linux 上，却继承了消耗外部 API 额度、依赖�
 
 [Sandbox](../../../../.github/workflows/sandbox.yml) 保留 master 推送时自动执行的 bwrap 与 Landlock x64/arm64 检查。bwrap 作业也运行完整单元测试和部署配置测试。Seatbelt 和 macOS 单元测试一致性检查仅在手动触发时运行。启用的作业保留测试断言；改变触发方式不会把失败的测试变成成功。
 
+Sandbox 与打包发行版命令同时要求测试进程成功退出，以及完整的预期文件执行数量。文件通过摘要不能覆盖进程失败，进程成功也不能隐藏自行跳过的平台测试。
+
 本决策部分取代[真实 API CI 记录](../testing/2026-06-19-real-api-e2e-ci.zh.md)和[串行参考流程记录](2026-07-21-serial-cross-platform-ci-reference.zh.md)中的触发策略。它们关于密钥安全与独立参考验证的依据仍然有用，因此两份记录继续保留在活动目录。拉取请求 CI 与发布工作流保留各自的独立策略。
 
 ## 曾考虑的替代方案
@@ -30,4 +32,4 @@ Docker 仓库部署在 Linux 上，却继承了消耗外部 API 额度、依赖�
 
 ## 验证
 
-[工作流测试](../../../../scripts/ci-workflow.spec.ts) 固定自动 Linux 检查清单、手动套件选择和密钥范围，并使用缺失及合成密钥执行 API 预检。[远程事件测试](../../../../packages/api/remotes/tests/remote-events.host.spec.ts) 使用具备 Session 的主体，验证路由取自持久化所有者，而非当前请求用户。[Fixture（测试前置数据）布局测试](../../../../scripts/session-fixture-layout.spec.ts) 要求会话记录采用规范格式，且不改变解码后的载荷。
+[工作流测试](../../../../scripts/ci-workflow.spec.ts)固定自动 Linux 检查清单、手动套件选择和密钥范围，使用缺失及合成密钥执行 API 预检，并针对成功、失败和自行跳过的测试结果执行每个 Sandbox shell 包装命令。[远程事件测试](../../../../packages/api/remotes/tests/remote-events.host.spec.ts)使用具备 Session 的主体，验证路由取自持久化所有者，而非当前请求用户。[Fixture（测试前置数据）布局测试](../../../../scripts/session-fixture-layout.spec.ts)要求会话记录采用规范格式，且不改变解码后的载荷。

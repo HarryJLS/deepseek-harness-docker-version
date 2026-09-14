@@ -19,9 +19,6 @@
     },
     {
       "path": "../nacos-client"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
     }
   ]
 }

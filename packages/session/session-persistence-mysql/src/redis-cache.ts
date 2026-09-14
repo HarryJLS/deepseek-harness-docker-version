@@ -219,7 +219,7 @@ export class RedisSessionCache {
     }
   }
 
-  /** Stop reconnecting and release the socket after the persistence coordinator drains its writes. */
+  /** Stop reconnecting and release the socket after the provider drains its write handles. */
   close(): void {
     this.closed = true
     this.available = false
