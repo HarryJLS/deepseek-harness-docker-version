@@ -71,7 +71,7 @@ jobs:
     name: windows node 24 / wine
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -151,7 +151,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, vm-backup]
     steps:
       # The archive check compares the selected commit with its first parent.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -203,7 +203,7 @@ jobs:
     name: serial / macos
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v4
         with:
@@ -231,7 +231,7 @@ jobs:
     runs-on: [self-hosted, dsh-win-ci, windows]
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Enable Developer Mode (symlink support)
         shell: pwsh
@@ -338,7 +338,7 @@ jobs:
             runner: dsh-windows-2025-96core
             workload: production-site
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v4
         with:
@@ -429,7 +429,7 @@ jobs:
             runner: dsh-windows-2025-96core
             workers: '2'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v4
         with:
