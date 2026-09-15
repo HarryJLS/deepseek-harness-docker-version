@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/nacos/nacos-file-mirror/README.md
-README.md: aa45e9f24782662c48382e909f17ab4c3aecf641
-README.zh.md: bc4262bd15bcc4ae20e2b7fc2f522fedce8812f1
+README.md: 7a0c9a00aff40fb2fa848ed3503d790eaa02d66b
+README.zh.md: 928829a3e9880d54d7da57302025d482d394f80f

@@ -25,6 +25,8 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
+请求作用域辅助函数的 Host 消费方将本包声明为共享 peer 依赖。分别安装的副本拥有不同的 `AsyncLocalStorage` 实例，使用另一副本的数据读取方会看到无用户作用域的操作，而非 HTTP 或 WebSocket 入口接纳的身份。
+
 `parseUserId` 接受单个区分大小写、最多 32 个字符的标识。缺失、null 和空的外部值统一解析为 `-`；两端带空白、含控制字符或逗号的字符串以及非字符串值会被拒绝。`withUser` 为一次操作及其后续异步工作设置用户作用域。`userScopedIterable` 在惰性迭代和清理期间保留准入时的身份。
 
 `requestUserId` 区分用户请求与无用户作用域的 Host 维护操作。`currentUserId` 提供审计操作人，在请求之外使用 `-`。`canAccessUser` 仅允许用户身份与持久化所有者匹配的请求访问；未记录所有者的元数据属于 `-`。无用户作用域的 Host 维护操作可以枚举所有用户，因此请求处理器不能清除作用域后向调用方返回不受限的数据。
@@ -33,6 +35,8 @@ kind: "package-library"
 
 <a id="understand-the-implementation"></a>
 ## 理解实现
+
+本包不发布运行时不变式伴生入口。请求身份不暴露 Cordis 事件流，消费者负责验证该身份与持久化归属的关系。
 
 <details>
 <summary>实现细节</summary>

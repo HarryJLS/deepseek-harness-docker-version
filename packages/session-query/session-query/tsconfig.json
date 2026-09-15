@@ -39,9 +39,6 @@
       "path": "../../session/session-projection-cache"
     },
     {
-      "path": "../../runtime-diagnostics/invariants"
-    },
-    {
       "path": "../../identity/user-context"
     }
   ]

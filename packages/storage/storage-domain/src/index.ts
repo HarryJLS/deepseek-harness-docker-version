@@ -89,7 +89,10 @@ export class DomainFacility {
    * (`facet-unsupported`); open the unit projected from the spec (backend
    * `version-mismatch`/`malformed-medium` pass through); load and validate
    * every stored record against the spec's zod schemas (`invalid-record`
-   * with the offending table and key); construct the domain.
+   * with the offending table and key — unless the spec declares
+   * `invalidRecords: 'backup-and-skip'` and the unit can move documents aside, in
+   * which case the failing record is backed up, logged, and skipped);
+   * construct the domain.
    *
    * Lifecycle: the CALLER owns the returned handle and closes it via
    * `Domain.close()` (typically as its own `ctx.effect` disposer) — the
@@ -114,7 +117,7 @@ export class DomainFacility {
       }
       const unit = await backend.kv.open(descriptorOf(spec))
       try {
-        const { tables, globalValue } = await loadDomainSnapshot(spec, unit)
+        const { tables, globalValue } = await loadDomainSnapshot(spec, unit, (message) => { this.ctx.logger.error(message) })
         // The onClosed hook runs strictly after teardown completes: writes
         // landing during the drain still emit domain/changed, and the domain
         // stays resolvable (the package invariant cross-checks each event)

@@ -36,6 +36,8 @@ Every write supplies the [shared audit fields](../../util/mysql-schema/README.md
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+No runtime invariant companion is published. Content-addressed insertion and verified reads require database observations; the attachment service owns image admission rules.
+
 <details>
 <summary>Implementation internals</summary>
 

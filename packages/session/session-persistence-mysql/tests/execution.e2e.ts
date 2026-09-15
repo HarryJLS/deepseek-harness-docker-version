@@ -3,7 +3,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import mysql from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mysqlIdGenerator, resolveMysqlPool } from '@deepseek-ai/dsh-mysql-schema'
-import { SessionId, type SessionHeader, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionSeq, type SessionHeader, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import { parseUserId, withUser } from '@deepseek-ai/dsh-user-context'
 import { MysqlSessionExecution } from '../src/execution.ts'
 import { MysqlSessionStore } from '../src/store.ts'
@@ -19,10 +20,10 @@ describe.skipIf(url === undefined)('OceanBase shared execution', () => {
   let owners: MysqlSessionExecution[]
   let stores: MysqlSessionStore[]
   const meta = (): SessionHeader => ({
-    id: SessionId(randomUUID()), version: 0, userId: alice, cwd: '/tmp', createdAt: Date.now(),
+    id: SessionId(randomUUID()), version: 3, isSeeded: false, userId: alice, cwd: '/tmp', createdAt: Date.now(),
   })
   const event = (seq: number): SessionEvent => ({
-    type: 'plan/mode', seq, time: Date.now(), data: { active: true },
+    type: 'plan/mode', seq: SessionSeq(seq), time: Date.now(), data: { active: true },
   })
 
   beforeAll(async () => {
@@ -48,7 +49,7 @@ describe.skipIf(url === undefined)('OceanBase shared execution', () => {
     const header = meta()
     const first = await withUser(alice, () => owners[0]!.acquire(header.id))
     await withUser(alice, () => stores[0]!.appendBatch(header, [event(0)], false))
-    await expect(withUser(alice, () => owners[1]!.acquire(header.id))).rejects.toThrow('busy')
+    await expect(withUser(alice, () => owners[1]!.acquire(header.id))).rejects.toBeInstanceOf(SessionAlreadyOwnedError)
     await expect(withUser(alice, () => stores[1]!.appendBatch(header, [event(1)], true))).rejects.toThrow('ownership')
     expect((await withUser(alice, () => stores[1]!.loadStored(header.id)))?.events).toHaveLength(1)
     await first[Symbol.asyncDispose]()
@@ -81,7 +82,7 @@ describe.skipIf(url === undefined)('OceanBase shared execution', () => {
     await stores[0]!.appendBatch(header, [event(0)], false)
     await delay(3200)
     expect(first.signal.aborted).toBe(false)
-    await expect(owners[1]!.acquire(header.id)).rejects.toThrow('busy')
+    await expect(owners[1]!.acquire(header.id)).rejects.toBeInstanceOf(SessionAlreadyOwnedError)
     await expect(withUser(bob, () => owners[1]!.cancel(header.id))).rejects.toThrow('not found')
     await withUser(alice, () => owners[1]!.cancel(header.id))
     await vi.waitFor(() => { expect(first.signal.aborted).toBe(true) })

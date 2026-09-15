@@ -36,6 +36,8 @@ kind: "package-reference"
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
+本包不发布运行时不变式伴生入口。内容寻址写入与校验读取需要数据库观测，图片准入规则由附件服务负责。
+
 <details>
 <summary>实现细节</summary>
 

@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { storedAttempt as event } from './events.ts'
 import { parseUserId } from '@deepseek-ai/dsh-user-context'
 import { RedisSessionCacheConfig, resolveRedisSessionCacheConfig } from '../src/redis-config.ts'
 import { RedisSessionCache } from '../src/redis-cache.ts'
@@ -62,11 +63,7 @@ vi.mock('ioredis', () => ({
 }))
 
 const header = (user = 'alice', id = 'session:1'): SessionHeader => ({
-  id: SessionId(id), userId: parseUserId(user), version: 0, createdAt: 1,
-})
-const event = (seq: number, text = 'hello'): SessionEvent => ({
-  seq, time: 1, type: 'assistant/chunk',
-  data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text } },
+  id: SessionId(id), userId: parseUserId(user), version: 3, isSeeded: false, createdAt: 1,
 })
 const warnings: string[] = []
 const caches: RedisSessionCache[] = []
@@ -129,7 +126,7 @@ describe('Redis session event cache', () => {
     expect(await first.read(header(), 'row-2', 0, 1)).toBeUndefined()
     const second = await cache({}, 'another-app')
     expect(await second.read(header(), 'row-1', 0, 1)).toBeUndefined()
-    const anonymous = { id: SessionId('anonymous'), version: 0, createdAt: 1 }
+    const anonymous: SessionHeader = { id: SessionId('anonymous'), version: 3, isSeeded: false, createdAt: 1 }
     await first.write(anonymous, 'row-3', [event(0)])
     expect([...server.entries.keys()].some(key => key.includes(':user:-:'))).toBe(true)
   })
@@ -195,6 +192,16 @@ describe('Redis session event cache', () => {
       expect(await value.read(header(), 'row', 0, 1)).toBeUndefined()
     }
     server.entries.get(key)!.value = Buffer.alloc(1025)
+    expect(await value.read(header(), 'row', 0, 1)).toBeUndefined()
+  })
+
+  it('treats cache entries from another Session format generation as misses', async () => {
+    const value = await cache()
+    await value.write(header(), 'row', [event(0)])
+    const key = [...server.entries.keys()][0]!
+    const record = JSON.parse(server.entries.get(key)!.value.toString('utf8')) as Record<string, unknown>
+    record['sessionVersion'] = 2
+    server.entries.get(key)!.value = Buffer.from(JSON.stringify(record))
     expect(await value.read(header(), 'row', 0, 1)).toBeUndefined()
   })
 

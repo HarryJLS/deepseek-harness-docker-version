@@ -18,7 +18,7 @@ Keys begin with `dsh-` and contain application, database, user, session, and phy
 
 The Docker bundle selects the local attachment provider's explicit temporary mode. Files live below a configured relative directory and are separated by user. Session references contain paths, filenames, and verified metadata. Missing files become path-only content before an Agent step; existing model history changes through ordinary source-attributed surface replacements recorded in the session log. Durable local attachment storage remains the default outside this deployment.
 
-The [user-ownership decision](2026-09-06-oceanbase-user-ownership.md) continues to own request identity and SQL audit fields. The [durable-image decision](../feature/2026-07-22-web-multimodal-image-input-and-durable-attachments.md) continues to own normal image admission and durable defaults; temporary deployment retention is an explicit exception, not an implicit weakening of those defaults.
+The [user-ownership decision](2026-09-06-oceanbase-user-ownership.md) owns request identity and SQL audit fields. The [attachment service](../../../../packages/attachment/attachment/README.md) defines normal image admission and durable defaults; temporary deployment retention is an explicit exception to those defaults.
 
 ## Alternatives considered
 

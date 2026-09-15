@@ -246,7 +246,7 @@ export class DomainImpl {
       }
       let staged: DomainImpl | undefined
       const result = await this.unit.transaction(async (unit) => {
-        const snapshot = await loadDomainSnapshot(this.spec, unit)
+        const snapshot = await loadDomainSnapshot(this.spec, unit, (message) => { this.ctx.logger.error(message) })
         const local = new DomainImpl(this.ctx, this.spec, unit, snapshot.tables, snapshot.globalValue, noop, noop)
         staged = local
         try { return await operation(local) }

@@ -1,6 +1,7 @@
 import type mysql from 'mysql2/promise'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import { parseUserId, withUser } from '@deepseek-ai/dsh-user-context'
 import { MysqlSessionExecution } from '../src/execution.ts'
 
@@ -91,8 +92,8 @@ describe('shared execution reservations', () => {
     expect(a.owns(id)).toBe(true)
     expect(await b.active(id)).toBe(true)
     await a.assertOwned(id)
-    await expect(a.acquire(id)).rejects.toThrow('busy')
-    await expect(b.acquire(id)).rejects.toThrow('busy')
+    await expect(a.acquire(id)).rejects.toBeInstanceOf(SessionAlreadyOwnedError)
+    await expect(b.acquire(id)).rejects.toBeInstanceOf(SessionAlreadyOwnedError)
     expect(b.owns(id)).toBe(false)
     await lease[Symbol.asyncDispose]()
     await lease[Symbol.asyncDispose]()

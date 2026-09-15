@@ -7,23 +7,23 @@
   },
   "files": [
     "src/index.ts",
-    "src/invariant.ts",
     "src/types.ts",
     "src/remote-events.ts",
     "src/agent.ts",
+    "src/assistant-stream.ts",
+    "src/shared-assistant.ts",
     "src/catalog.ts",
     "src/commands.ts",
-    "src/execution.ts",
     "src/control.ts",
     "src/file-references.ts",
     "src/history.ts",
     "src/list.ts",
+    "src/media-references.ts",
     "src/model-selection-projection.ts",
-    "src/skill-catalog.ts"
+    "src/skill-catalog.ts",
+    "src/execution.ts"
   ],
   "references": [
-    { "path": "../../interaction/user-questions" },
-    { "path": "../gateway/tsconfig.host.json" },
     {
       "path": "../../../vendor/cordis"
     },
@@ -49,22 +49,31 @@
       "path": "../../attachment/attachment"
     },
     {
+      "path": "../../client/file-upload/tsconfig.host.json"
+    },
+    {
+      "path": "../../client/connection/tsconfig.host.json"
+    },
+    {
       "path": "../../interaction/permission-presets"
     },
     {
       "path": "../../jobs/jobs"
     },
     {
+      "path": "../../fs/fs"
+    },
+    {
       "path": "../../llm/llm"
+    },
+    {
+      "path": "../../util/deque"
     },
     {
       "path": "../../util/native-command"
     },
     {
       "path": "../../preset/agent-presets"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
     },
     {
       "path": "../../session/session-persistence"
@@ -88,6 +97,12 @@
       "path": "../../subagent/subagent"
     },
     {
+      "path": "../../util/time"
+    },
+    {
+      "path": "../../util/values"
+    },
+    {
       "path": "../../typert/protocol"
     },
     {
@@ -95,6 +110,12 @@
     },
     {
       "path": "../../workspace/workspace"
+    },
+    {
+      "path": "../../interaction/user-questions"
+    },
+    {
+      "path": "../gateway/tsconfig.host.json"
     },
     {
       "path": "../../identity/user-context"

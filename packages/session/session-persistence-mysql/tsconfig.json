@@ -8,6 +8,10 @@
     "src"
   ],
   "references": [
+    { "path": "../../util/brand" },
+    { "path": "../../api/session-controller/tsconfig.host.json" },
+    { "path": "../../attachment/attachment" },
+    { "path": "../../client/file-upload/tsconfig.host.json" },
     {
       "path": "../../../vendor/cosmokit"
     },
@@ -24,7 +28,7 @@
       "path": "../session-persistence"
     },
     {
-      "path": "../../runtime-diagnostics/invariants"
+      "path": "../session-format-catalog"
     },
     {
       "path": "../../util/mysql-schema"

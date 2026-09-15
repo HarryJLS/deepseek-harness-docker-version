@@ -1,15 +1,11 @@
-# Sandbox CI: the keyless real-kernel confinement proofs. This master-only
-# reference stays outside the pull-request verdict; rationale lives in
-# .agents/notes/implemented/process/2026-07-21-serial-cross-platform-ci-reference.md.
-# A separate workflow from ci.yml because the axis is different — these jobs
-# fan out over OS×runner (kernel capabilities), not node versions. The Landlock
-# launcher is built from native/landlock-run on each Landlock leg and installed
-# from the same tarballs the main-repository release workflow publishes.
+# Linux checks cover the Docker deployment; macOS runs only on manual dispatch.
+# Policy: .agents/notes/implemented/process/2026-09-13-docker-ci-scope.md.
 name: Sandbox
 
 on:
   push:
     branches: [master]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,21 +20,8 @@ env:
   DSH_TELEMETRY_DISABLED: '1'
 
 jobs:
-  # Keyless real-kernel sandbox proofs (sandbox Agent Note § Testing): each ladder
-  # rung is only provable on a host where it enforces, so this job fans out
-  # an OS×runner matrix — bwrap and Landlock on Linux (separate legs: the
-  # Landlock files force the bwrap rung off, so each leg proves exactly one
-  # rung; Landlock twice, once per architecture, each confining through the
-  # locally built launcher), Seatbelt on macOS (sandbox-exec ships with
-  # the OS). One node
-  # version only: kernel confinement does not vary by node, and ci.yml's
-  # node matrix already covers the node axis.
-  #
-  # The e2e files self-skip where their runner is absent, so a leg that lost
-  # its runner (no bwrap, kernel without Landlock, macOS without
-  # sandbox-exec) would otherwise pass as a false green — the same trap
-  # e2e.yml's key preflight guards against. Each leg therefore asserts BOTH
-  # its platform files actually ran: `Test Files  2 passed (2)`, no skips.
+  # Both platform files must execute: a missing confinement backend cannot pass
+  # by skipping the real-kernel tests.
   sandbox-e2e:
     strategy:
       fail-fast: false
@@ -50,8 +33,6 @@ jobs:
             runner: landlock
           - os: ubuntu-24.04-arm
             runner: landlock
-          - os: macos-latest
-            runner: seatbelt
     name: sandbox e2e (${{ matrix.runner }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -84,16 +65,16 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq musl-tools
-          pnpm --dir native/landlock-run run build:ts
-          pnpm --dir native/landlock-run run build:native
+          pnpm --dir native/system run build:ts
+          pnpm --dir native/system run build:native
 
-      # The unit suite runs on ubuntu in `checks`; this is the one darwin leg
-      # in the workflow, so run it here too — the platform-dependent unit
-      # expectations (Seatbelt path canonicalization: /tmp IS /private/tmp)
-      # take their darwin branch only on this runner.
-      - name: Unit tests (darwin parity)
-        if: matrix.runner == 'seatbelt'
+      - name: Unit tests (Linux)
+        if: matrix.runner == 'bwrap'
         run: pnpm run test
+
+      - name: Deployment configuration tests
+        if: matrix.runner == 'bwrap'
+        run: pnpm run test:deployment
 
       - name: Sandbox e2e (real kernel confinement, world-verified)
         # NO_COLOR: vitest force-enables ANSI color under GITHUB_ACTIONS even
@@ -102,10 +83,11 @@ jobs:
         env:
           NO_COLOR: 1
         run: |
-          set -u +e -o pipefail
+          set -euo pipefail
+          status=0
           out=$(pnpm exec vitest run --config vitest.e2e.config.ts \
             packages/sandbox/sandbox-local/tests/${{ matrix.runner }}.e2e.ts \
-            packages/shell/bash-sandbox/tests/${{ matrix.runner }}.e2e.ts 2>&1); status=$?
+            packages/shell/bash-sandbox/tests/${{ matrix.runner }}.e2e.ts 2>&1) || status=$?
           echo "$out"
           [ "$status" -eq 0 ]
           # Both platform files must have RUN — a self-skip (runner missing on
@@ -124,9 +106,38 @@ jobs:
         env:
           NO_COLOR: 1
         run: |
-          set -u +e -o pipefail
+          set -euo pipefail
+          status=0
           out=$(pnpm exec vitest run --config vitest.e2e.config.ts \
-            packages/sandbox/sandbox-local/tests/packed-install.e2e.ts 2>&1); status=$?
+            packages/sandbox/sandbox-local/tests/packed-install.e2e.ts 2>&1) || status=$?
           echo "$out"
           [ "$status" -eq 0 ]
           echo "$out" | grep -qE 'Test Files[[:space:]]+1 passed \(1\)'
+
+  seatbelt:
+    if: github.event_name == 'workflow_dispatch'
+    name: sandbox e2e (seatbelt, macos-latest, manual)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+      - name: Unit tests (darwin parity)
+        run: pnpm run test
+      - name: Sandbox e2e (real kernel confinement, world-verified)
+        env:
+          NO_COLOR: 1
+        run: |
+          set -euo pipefail
+          status=0
+          out=$(pnpm exec vitest run --config vitest.e2e.config.ts \
+            packages/sandbox/sandbox-local/tests/seatbelt.e2e.ts \
+            packages/shell/bash-sandbox/tests/seatbelt.e2e.ts 2>&1) || status=$?
+          echo "$out"
+          [ "$status" -eq 0 ]
+          echo "$out" | grep -qE 'Test Files[[:space:]]+2 passed \(2\)'

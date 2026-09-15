@@ -20,10 +20,13 @@ export type RemoteStreamOpener = (
 /** Convert an invocation or carrier failure to a stable wire value. */
 export type RemoteStreamFailureMapper = (error: unknown) => RemoteStreamFailure
 
+const MAX_MISSED_HEARTBEATS = 2
+
 /** Own the no-server WebSocket acceptor and every active logical stream. */
 export class RemoteStreamMuxServer {
   private readonly server = new WebSocketServer({ noServer: true })
   private readonly connections = new Set<Promise<void>>()
+  private readonly missedHeartbeats = new WeakMap<WebSocket, number>()
   private heartbeatTimer: NodeJS.Timeout | undefined
 
   /**
@@ -46,6 +49,8 @@ export class RemoteStreamMuxServer {
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     const userId = requestUserId()
     this.server.handleUpgrade(req, socket, head, (websocket) => {
+      this.missedHeartbeats.set(websocket, 0)
+      websocket.on('pong', () => { this.missedHeartbeats.set(websocket, 0) })
       this.startHeartbeat()
       const connection = new RemoteStreamMuxConnection(websocket, this.open, this.failure, userId)
       const done = connection.run()
@@ -73,7 +78,18 @@ export class RemoteStreamMuxServer {
     if (this.heartbeatTimer !== undefined) return
     this.heartbeatTimer = setInterval(() => {
       for (const socket of this.server.clients) {
-        if (socket.readyState === WebSocket.OPEN) socket.ping()
+        if (socket.readyState !== WebSocket.OPEN) continue
+        const missed = this.missedHeartbeats.get(socket) as number
+        if (missed >= MAX_MISSED_HEARTBEATS) {
+          setImmediate(() => {
+            if ((this.missedHeartbeats.get(socket) as number) >= MAX_MISSED_HEARTBEATS) {
+              socket.terminate()
+            }
+          })
+          continue
+        }
+        this.missedHeartbeats.set(socket, missed + 1)
+        socket.ping()
       }
     }, this.heartbeatIntervalMs)
     this.heartbeatTimer.unref()

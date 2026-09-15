@@ -5,9 +5,11 @@ import { Redis } from 'ioredis'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import { DEFAULT_USER_ID } from '@deepseek-ai/dsh-user-context'
 import type { ResolvedRedisSessionCacheConfig } from './redis-config.ts'
+import { CURRENT_SESSION_FORMAT_VERSION } from './session-format.ts'
 
 interface ChunkManifest {
   format: 'dsh-event-chunks-v1'
+  sessionVersion: number
   parts: number
   bytes: number
   sha256: string
@@ -15,6 +17,7 @@ interface ChunkManifest {
 
 interface CachedEvent {
   format: 'dsh-event-v1'
+  sessionVersion: number
   sha256: string
   event: SessionEvent
 }
@@ -79,7 +82,7 @@ export class RedisSessionCache {
 
   private key(meta: SessionHeader, rowId: string, seq: number): string {
     const owner = meta.userId ?? DEFAULT_USER_ID
-    const identity = hash(JSON.stringify([this.scope, owner, meta.id, rowId]))
+    const identity = hash(JSON.stringify([this.scope, CURRENT_SESSION_FORMAT_VERSION, owner, meta.id, rowId]))
     return `${this.scope}:user:${encodeURIComponent(owner)}:session:${encodeURIComponent(meta.id)}:{${identity}}:event:${seq}`
   }
 
@@ -113,6 +116,7 @@ export class RedisSessionCache {
           record = await this.readChunks(this.key(meta, rowId, start + offset), record, signal)
         }
         if (!isRecord(record) || record['format'] !== 'dsh-event-v1'
+          || record['sessionVersion'] !== CURRENT_SESSION_FORMAT_VERSION
           || !isRecord(record['event']) || record['sha256'] !== hash(JSON.stringify(record['event']))) return undefined
         const decoded = record['event']
         if (!isRecord(decoded) || decoded['seq'] !== start + offset
@@ -135,7 +139,8 @@ export class RedisSessionCache {
     signal?: AbortSignal,
   ): Promise<unknown> {
     const { parts, bytes, sha256 } = manifest
-    if (typeof parts !== 'number' || !Number.isSafeInteger(parts) || parts < 2
+    if (manifest['sessionVersion'] !== CURRENT_SESSION_FORMAT_VERSION
+      || typeof parts !== 'number' || !Number.isSafeInteger(parts) || parts < 2
       || typeof bytes !== 'number' || !Number.isSafeInteger(bytes)
       || bytes <= this.config.maxChunkBytes || bytes > this.config.maxEventBytes
       || parts !== Math.ceil(bytes / this.config.maxChunkBytes)
@@ -193,7 +198,12 @@ export class RedisSessionCache {
         if (pending.length >= this.config.batchSize) await flush()
       }
       for (const event of events) {
-        const record: CachedEvent = { format: 'dsh-event-v1', sha256: hash(JSON.stringify(event)), event }
+        const record: CachedEvent = {
+          format: 'dsh-event-v1',
+          sessionVersion: CURRENT_SESSION_FORMAT_VERSION,
+          sha256: hash(JSON.stringify(event)),
+          event,
+        }
         const data = Buffer.from(JSON.stringify(record))
         if (data.byteLength > this.config.maxEventBytes) continue
         const key = this.key(meta, rowId, event.seq)
@@ -209,7 +219,13 @@ export class RedisSessionCache {
         }
         // Publish the descriptor only after every referenced chunk has reached Redis.
         await flush()
-        const manifest: ChunkManifest = { format: 'dsh-event-chunks-v1', parts, bytes: data.byteLength, sha256: hash(data) }
+        const manifest: ChunkManifest = {
+          format: 'dsh-event-chunks-v1',
+          sessionVersion: CURRENT_SESSION_FORMAT_VERSION,
+          parts,
+          bytes: data.byteLength,
+          sha256: hash(data),
+        }
         await put(key, Buffer.from(JSON.stringify(manifest)))
       }
       await flush()
@@ -219,7 +235,7 @@ export class RedisSessionCache {
     }
   }
 
-  /** Stop reconnecting and release the socket after the persistence coordinator drains its writes. */
+  /** Stop reconnecting and release the socket after the provider drains its write handles. */
   close(): void {
     this.closed = true
     this.available = false

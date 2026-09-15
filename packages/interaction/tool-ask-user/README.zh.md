@@ -9,9 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-交付方式由 `userQuestions` 选择：默认实时模式等待回答者，持久化模式则记录问题并结束本轮，等待后续 Session Controller 决定。下文的实时交互仍是 Docker 部署以外的默认行为。
-
-`dsh-tool-ask-user` 为模型提供一个工具——`ask_user_question`——用于在需要确认、选择结果或缺失的信息才能继续时，向用户提出简明问题。工具会暂停，直到首个作用域 answerer 接受请求，然后把回答作为普通工具结果送回 agent loop（智能体循环），因此循环机制没有任何变化。工具返回规范的 `{ answers: [...] }` 结构，并以紧凑的 JSON 文本形式呈现。它自身不渲染 UI，也不了解输入的收集方式；Web Client 通过 Remote Events 提供 answerer。运行时中归属于其他 agent 的子级不能向用户提问；它必须在最终结果中包含尚未解决的问题。
+`ask_user_question` 向用户请求确认、选择或缺失的信息。实时交付等待已接受的回答，并返回紧凑 JSON；持久化交付记录待回答问题并结束本轮，等待之后的决定。缺少实时回答者或实时调用被取消时返回错误。归属于运行时其他 agent 的子级不能调用此工具，必须在最终结果中报告尚未解决的问题。本包需要兼容的用户交互表面，自身不渲染或收集输入。
 
 ## 目录
 
@@ -27,7 +25,9 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-凡模型应当能够暂停等待人类决定的场景，都可组合此插件：它提供 `ask_user_question` 工具，并且需要带有接受作用域请求的 answerer 的 `ctx.userQuestions` seam。没有 answerer 接受时，工具调用会以错误失败，而不是降级。
+交付方式由 `userQuestions` 选择：默认实时模式等待回答者，持久化模式则记录问题并结束本轮，等待后续 Session Controller 决定。下文的实时交互仍是 Docker 部署以外的默认行为。
+
+凡模型应当能够暂停等待用户决定的场景，都可组合此插件。它通过 `ctx.userQuestions` 提供 `ask_user_question`。实时交付需要接受作用域请求的回答者，否则工具调用返回错误。
 
 ### 何时调用该工具
 
@@ -76,7 +76,7 @@ kind: "package-reference"
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 工具注册：`ask_user_question` schema、执行路径、结果渲染 |
-| [`src/invariant.ts`](src/invariant.ts) | 不变式伴生插件（无运行时不变式；执行关系由 seam 拥有） |
+| — | 不发布运行时不变式伴生入口；执行关系由 seam 拥有。 |
 
 ### Consumer 角色
 

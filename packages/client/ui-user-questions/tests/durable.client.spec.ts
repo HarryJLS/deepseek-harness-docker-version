@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { UserQuestionState } from '@deepseek-ai/dsh-user-questions/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import type { PendingQuestion } from '../src/client/contract/slots.ts'
 import { observeDurableQuestions } from '../src/client/durable.ts'
 
@@ -107,7 +108,9 @@ describe('durable question presentation', () => {
     const b = bench()
     b.state.set({ pending: b.pending, decision: null })
     const card = [...b.cards][0]!
-    b.answerQuestion.mockResolvedValueOnce({ ok: false, error: { code: 'busy', message: 'Retry later', details: {} } })
+    b.answerQuestion.mockResolvedValueOnce({
+      ok: false, error: new RemoteError('session/agent-busy', 'Retry later', { reason: 'busy' }),
+    })
     await expect(card.cancel()).rejects.toThrow('Retry later')
     const waiting = Promise.withResolvers<RemoteResult<{ accepted: true; duplicate: boolean }>>()
     b.answerQuestion.mockReturnValueOnce(waiting.promise)

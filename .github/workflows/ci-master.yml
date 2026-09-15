@@ -1,27 +1,25 @@
 name: CI master
 
 on:
-  push:
-    branches: [master]
   workflow_dispatch:
     inputs:
       suite:
         description: Manual CI suite to run
         required: true
-        default: larger-runner-benchmark
+        default: wine-apt-cache
         type: choice
         options:
+          - wine-apt-cache
+          - platform-runtimes
+          - self-hosted-standby
           - larger-runner-benchmark
           - consolidated-runner-benchmark
 
-# A master push may carry only the two self-hosted standby drills and the Wine
-# apt cache seeder; those drills outlast the interval between master merges, so
-# push is exempt from cancellation (see ci-failover-runbook). workflow_dispatch
-# keeps cancelling: a re-dispatched runner benchmark holds up to 12 larger
-# runners for 15 minutes in this same group.
+# Self-hosted and larger-runner suites require separately provisioned pools.
+# Policy: .agents/notes/implemented/process/2026-09-13-docker-ci-scope.md.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -33,12 +31,8 @@ env:
   DSH_TELEMETRY_DISABLED: '1'
 
 jobs:
-  # Master seeds the Wine apt-archive cache in the default-branch scope,
-  # which every pull request's windows job can restore; saves from
-  # pull-request runs are scoped to their own merge ref and help nobody
-  # else. Runs in seconds when the image version already has a cache.
   wine-apt-cache:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'wine-apt-cache'
     name: wine apt cache
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -46,13 +40,11 @@ jobs:
       - name: Compose Wine apt cache key
         id: wine-cache-key
         run: echo "key=wine-debs-${ImageOS:-linux}-${ImageVersion:-v0}" >> "$GITHUB_OUTPUT"
-
       - uses: actions/cache@v4
         id: wine-cache
         with:
           path: ~/wine-debs
           key: ${{ steps.wine-cache-key.outputs.key }}
-
       - name: Download the Wine dependency closure
         if: steps.wine-cache.outputs.cache-hit != 'true'
         run: |
@@ -62,28 +54,112 @@ jobs:
           cp /var/cache/apt/archives/*.deb "$HOME/wine-debs/"
           du -sh "$HOME/wine-debs"
 
-  # Hot-standby drill for the in-house self-hosted pool: every master move
-  # re-runs the complete unsharded aggregate on the persistent 64-core VM,
-  # continuously proving that environment can take over a required lane if
-  # the hosted pools degrade (the switch is then setting the writer-manageable
-  # DSH_CI_FAILOVER_LINUX variable — see the failover runbook, no merge required).
-  # Push-triggered, so this lane always executes the base branch's own
-  # workflow definition. This workflow never listens to pull_request, so the
-  # drill does not appear in PR checks. No cache steps because the VM's
-  # persistent pnpm store and tool caches make them redundant (and saving here
-  # would poison the hosted cache namespace with self-hosted paths).
+  python-runtime:
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'platform-runtimes'
+    name: python runtime / macOS and Linux ARM64
+    uses: ./.github/workflows/build-exe-for-python-sdk.yml
+    with:
+      targets: node24-linux-arm64,node24-macos-arm64,node24-macos-x64
+      ci: true
+    secrets:
+      DEEPSEEK_API_KEY_EXTERNAL: ${{ secrets.DEEPSEEK_API_KEY_EXTERNAL }}
+
+  # Wine runs once here, independently of the native serial standby aggregates.
+  windows:
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'platform-runtimes'
+    runs-on: ubuntu-latest
+    name: windows node 24 / wine
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+
+      - name: Configure pnpm store path
+        id: pnpm-store
+        run: |
+          store_root="$HOME/.local/share/pnpm/store"
+          echo "PNPM_CONFIG_STORE_DIR=$store_root" >> "$GITHUB_ENV"
+          store_path=$(PNPM_CONFIG_STORE_DIR="$store_root" pnpm store path --silent)
+          echo "path=$store_path" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-node-${{ env.PRIMARY_NODE_VERSION }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ env.PRIMARY_NODE_VERSION }}-pnpm-
+
+      # Master CI restores and seeds the image-specific Wine dependency cache.
+      - name: Compose Wine apt cache key
+        id: wine-cache-key
+        run: echo "key=wine-debs-${ImageOS:-linux}-${ImageVersion:-v0}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/wine-debs
+          key: ${{ steps.wine-cache-key.outputs.key }}
+
+      # Runner provisioning only — a developer machine installs Wine through
+      # its own package manager; the gate script assumes a wine binary and
+      # fails loud without one. Wine from the apt cache when present; else
+      # download the full dependency closure once and keep it for the next
+      # run. The `wine` dispatcher package (not bare `wine64`) is what puts a
+      # binary on PATH.
+      - name: Install Wine
+        run: |
+          if compgen -G "$HOME/wine-debs/*.deb" > /dev/null; then
+            # The restored archive is the full --download-only closure of
+            # `wine` for this runner image, so installing the .debs directly
+            # with dpkg needs no repository access. apt-get would instead
+            # re-download the same 100+ MB closure from the mirror, which has
+            # stalled the job past its budget on a degraded runner network.
+            # If the archive cannot satisfy the closure, fall back to the apt
+            # network install.
+            if ! sudo DEBIAN_FRONTEND=noninteractive dpkg -i "$HOME"/wine-debs/*.deb; then
+              sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+              sudo apt-get install -y --no-install-recommends "$HOME"/wine-debs/*.deb
+            fi
+          else
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends --download-only wine
+            mkdir -p "$HOME/wine-debs"
+            cp /var/cache/apt/archives/*.deb "$HOME/wine-debs/" 2>/dev/null || true
+            sudo apt-get install -y --no-install-recommends wine
+          fi
+
+      - name: Run the Wine Windows gates
+        run: bash scripts/wine-windows-gates.sh
+
+      - name: Shut down wineserver
+        if: always()
+        run: wineserver -k 2>/dev/null || true
+
+  # The standby suite requires both self-hosted pools. Persistent stores stay
+  # outside the GitHub-hosted cache namespace.
   serial-linux-selfhosted:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'self-hosted-standby'
     name: serial / linux (self-hosted standby)
     runs-on: [self-hosted, linux, x64, vm-backup]
     steps:
-      # DSH_ARCHIVE_BASE_REF below compares the frozen-archive gate against
-      # github.event.before, so full history is required: depth 2 would miss it
-      # on multi-commit or force pushes; full fetch is cheap here because
-      # checkout resolves against the VM's local mirror.
+      # The archive check compares the selected commit with its first parent.
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      # Redirect the Node compile cache (enabled by pnpm and TypeScript) off
+      # the root partition's /tmp before the first pnpm call in this lane —
+      # see .agents/notes/implemented/process/2026-08-28-ci-node-compile-cache-data-disk.md.
+      - name: Redirect Node compile cache to runner temp
+        run: echo "NODE_COMPILE_CACHE=${{ runner.temp }}/node-compile-cache" >> "$GITHUB_ENV"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -109,7 +185,7 @@ jobs:
 
       - name: Run complete unsharded primary Node CI serially
         env:
-          DSH_ARCHIVE_BASE_REF: ${{ github.event.before }}
+          DSH_ARCHIVE_BASE_REF: ${{ github.sha }}^
           DSH_COVERAGE_MAX_WORKERS: '1'
           DSH_E2E_MAX_WORKERS: '1'
           DSH_GATE_CONCURRENCY: '1'
@@ -149,19 +225,8 @@ jobs:
           DSH_SNAPSHOT_MAX_CONCURRENCY: '1'
         run: pnpm run check:ci
 
-  # Hot-standby drill for the in-house self-hosted Windows pool: every master
-  # move re-runs the complete unsharded Windows gate inventory on the persistent
-  # VM, continuously proving that environment can take over the required
-  # `windows` lane if the hosted pool degrades (the switch is setting the
-  # writer-manageable DSH_CI_FAILOVER_WINDOWS variable — see the failover
-  # runbook, no merge required). Push-triggered, so this lane always executes
-  # the base branch's own workflow definition. This workflow never listens to
-  # pull_request, so the drill does not appear in PR checks. No cache steps
-  # because the VM's persistent pnpm store and tool caches make them redundant
-  # (and saving here would poison the hosted cache namespace with self-hosted
-  # paths).
   serial-windows:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'self-hosted-standby'
     name: serial / windows (self-hosted standby)
     runs-on: [self-hosted, dsh-win-ci, windows]
     timeout-minutes: 120
@@ -184,18 +249,31 @@ jobs:
 
       - name: Configure persistent pnpm store
         shell: pwsh
+        # The store must share the ReFS workspace volume for the clone
+        # import method below; LOCALAPPDATA (C:) would cross volumes and
+        # break block clone. See 2026-08-30-windows-refs-store-block-clone-install.
         run: |
-          $storeRoot = "$env:LOCALAPPDATA\pnpm\store"
+          $storeRoot = "F:\.pnpm-store"
           echo "PNPM_CONFIG_STORE_DIR=$storeRoot" >> $env:GITHUB_ENV
 
       - name: Install (immutable)
         shell: pwsh
-        run: pnpm install --frozen-lockfile
+        # See 2026-08-30-windows-refs-store-block-clone-install for the
+        # ReFS block-clone rationale; use clone only on ReFS.
+        run: >-
+          $drive = (Split-Path -Qualifier $env:GITHUB_WORKSPACE).TrimEnd(':');
+          $fs = (Get-Volume -DriveLetter $drive).FileSystem;
+          if ($fs -eq 'ReFS') {
+            corepack pnpm install --frozen-lockfile --package-import-method=clone
+          } else {
+            pnpm install --frozen-lockfile
+          }
 
       - name: Run complete unsharded Windows gate inventory serially
         shell: pwsh
         env:
           DSH_COVERAGE_MAX_WORKERS: '1'
+          DSH_COVERAGE_TEST_TIMEOUT_MS: '90000'
           DSH_GATE_CONCURRENCY: '1'
           DSH_PUBLINT_CONCURRENCY: '1'
         run: pnpm run check:ci:windows-complete

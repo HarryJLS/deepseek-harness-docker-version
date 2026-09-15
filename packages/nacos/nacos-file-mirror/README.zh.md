@@ -57,6 +57,8 @@ kind: "package-reference"
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
+本包不发布运行时不变式伴生入口。文档到文件的发布需要文件系统观测，插件没有另一份 Cordis 状态可与写入字节比较。
+
 <details>
 <summary>实现细节</summary>
 

@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import mysql from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { resolveMysqlPool } from '@deepseek-ai/dsh-mysql-schema'
-import { SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionSeq, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { storedAttempt } from './events.ts'
 import { parseUserId, withUser } from '@deepseek-ai/dsh-user-context'
 import { MysqlSessionStore } from '../src/store.ts'
 
@@ -15,7 +16,7 @@ describe.skipIf(url === undefined)('OceanBase session rows', () => {
   let pool: mysql.Pool
   let store: MysqlSessionStore
   const meta = (userId = alice): SessionHeader => ({
-    id: SessionId(randomUUID()), version: 0, createdAt: Date.now(), cwd: '/tmp', userId,
+    id: SessionId(randomUUID()), version: 3, isSeeded: false, createdAt: Date.now(), cwd: '/tmp', userId,
   })
 
   beforeAll(async () => {
@@ -33,7 +34,7 @@ describe.skipIf(url === undefined)('OceanBase session rows', () => {
   it('writes Snowflake ids and audit fields while keeping the logical session identity', async () => {
     const header = meta()
     await withUser(alice, () => store.materializeHeader(header))
-    await store.appendBatch(header, [{ type: 'session/end-seed', seq: 0, time: Date.now(), data: {} }], true)
+    await store.appendBatch(header, [{ type: 'session/end-seed', seq: SessionSeq(0), time: Date.now(), data: {} }], true)
     const [sessions] = await pool.query<mysql.RowDataPacket[]>('SELECT * FROM dsh_session WHERE app = ? AND session_id = ?', [app, header.id])
     const [events] = await pool.query<mysql.RowDataPacket[]>('SELECT * FROM dsh_session_event WHERE app = ? AND session_id = ?', [app, header.id])
     for (const row of [sessions[0]!, events[0]!]) {
@@ -55,13 +56,13 @@ describe.skipIf(url === undefined)('OceanBase session rows', () => {
       expect(await store.loadStoredFrom(header.id, 0)).toBeUndefined()
       expect((await store.list()).some(item => item.id === header.id)).toBe(false)
       await expect(store.materializeHeader({ ...header, userId: bob })).rejects.toThrow('not found')
-      await expect(store.appendBatch(header, [{ type: 'session/end-seed', seq: 0, time: 1, data: {} }], true)).rejects.toThrow('not found')
+      await expect(store.appendBatch(header, [{ type: 'session/end-seed', seq: SessionSeq(0), time: 1, data: {} }], true)).rejects.toThrow('not found')
     })
     expect((await withUser(alice, () => store.loadStored(header.id)))?.meta.userId).toBe('alice')
   })
 
   it('defaults absent ownership to - and hides soft-deleted sessions', async () => {
-    const anonymous: SessionHeader = { id: SessionId(randomUUID()), version: 0, createdAt: 1, cwd: '/tmp' }
+    const anonymous: SessionHeader = { id: SessionId(randomUUID()), version: 3, isSeeded: false, createdAt: 1, cwd: '/tmp' }
     await store.materializeHeader(anonymous)
     expect((await withUser(parseUserId(undefined), () => store.list())).map(header => header.id)).toEqual([anonymous.id])
     await pool.query("UPDATE dsh_session SET is_deleted = 'Y', modifier = '-', gmt_modified = CURRENT_TIMESTAMP WHERE app = ? AND session_id = ?", [app, anonymous.id])
@@ -70,7 +71,7 @@ describe.skipIf(url === undefined)('OceanBase session rows', () => {
 
   it('rolls back a failed event batch without advancing the header revision', async () => {
     const header = meta()
-    const event = { type: 'session/end-seed' as const, seq: 0, time: 1, data: {} }
+    const event = { type: 'session/end-seed' as const, seq: SessionSeq(0), time: 1, data: {} }
     await store.appendBatch(header, [event], false)
     const revision = await store.readStoredRevision(header.id)
     await expect(store.appendBatch(header, [event], true)).rejects.toThrow()
@@ -89,12 +90,7 @@ describe.skipIf(url === undefined)('OceanBase session rows', () => {
 
   it('preserves control characters and literal escapes in a cold database read', async () => {
     const header = meta()
-    const events = [{
-      type: 'assistant/chunk' as const, seq: 0, time: 1,
-      data: { turn: 1, step: 1, chunk: {
-        type: 'text-delta' as const, index: 0, text: 'user-global\u0000AGENTS.md\t\n\\u0000',
-      } },
-    }]
+    const events = [storedAttempt(0, 'user-global\u0000AGENTS.md\t\n\\u0000')]
     await store.appendBatch(header, events, false)
     expect((await store.loadStored(header.id))?.events).toEqual(events)
     expect((await store.loadStoredFrom(header.id, 0))?.events).toEqual(events)

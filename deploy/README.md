@@ -19,7 +19,9 @@ The root [Dockerfile](../Dockerfile) builds the Web application. OceanBase in My
 - [Temporary Files](#temporary-files)
 - [User Isolation](#user-isolation)
 - [Schema](#schema)
+- [Retained Data](#retained-data)
 - [Deployment](#deployment)
+- [Isolated Verification](#isolated-verification)
 - [Configuration Updates](#configuration-updates)
 - [Operational Limits](#operational-limits)
 
@@ -58,6 +60,8 @@ deployment:
     renewIntervalMs: 5000
     pollIntervalMs: 500
     maxQuestionBytes: 65536
+    uploadReceiptTtlMs: 172800000
+    assistantStateChunkBytes: 49152
 ```
 
 These credentials are for the supplied local development stack. Use a dedicated database account for production. All fields in this example are required when using individual connection fields. A missing entry, unreachable Nacos server, invalid field, or incomplete database configuration stops startup before the application opens a pool. Database changes take effect after a container restart.
@@ -134,6 +138,17 @@ KV deletion is a soft delete; a later upsert restores the row. Session and attac
 
 Providers inspect existing tables without requiring DDL permissions. Missing tables can be created by a privileged role; incompatible existing tables cause an explicit startup error. Back up the old database and perform an operator-reviewed conversion or provision a new database before changing the Nacos database name. Re-running `CREATE TABLE IF NOT EXISTS` does not upgrade an old table.
 
+<a id="retained-data"></a>
+## Retained Data
+
+The Docker distribution uses the same tables, columns, and indexes for current Session records. Historical conversations remain archived under their existing `app` value; the current application does not convert, resume, or display them.
+
+For a fresh deployment over those tables, stop the previous application replicas and retain a database backup and their Nacos settings. Select an unused `deployment.appName`, such as `order-svc-v015`, for every new replica. Keep the database connection and `DSH_NACOS_NAMESPACE` unchanged. Each concurrent replica still needs a distinct `snowflakeWorkerId`. Apply the settings only when deploying the matching build; application names do not switch automatically.
+
+The new name selects empty Session and application KV state, including workspace registrations, without modifying the archived rows. Database-backed application state must be configured again; Nacos-managed model settings, credentials, and plugin entries remain in the same namespace. Redis keys also include the application name, so retained cache entries cannot supply an old Session to the new deployment.
+
+Retained data is not a browseable archive in the new Web interface. Inspecting it requires the previous build and its application name. Stop the new replicas before rollback; the previous build must not read the new application's records. Temporary attachment files can expire independently and are not preserved by a database backup.
+
 <a id="deployment"></a>
 ## Deployment
 
@@ -149,7 +164,20 @@ The Web application listens on port 3080. The local Nacos console uses 8080, its
 
 The default runtime base is `node:24-bookworm-slim`. When only the full Node 24 image is cached, the build accepts `--build-arg RUNTIME_BASE_IMAGE=node:24-bookworm` without changing the application or database configuration.
 
+Container command arguments can supply additional `--patch <path>` overlays. The entrypoint passes them before its automatic `--no-open` application flag, and preserves quoted paths as one argument.
+
 Only Nacos coordinates, entry names, the application listen port, and optional plugin-install settings remain operator environment inputs. Database and Redis credentials and connection options are not Compose application environment fields. Model API keys belong in `dsh-credentials.yaml`; inherited model-key environment variables retain their existing read-only precedence.
+
+<a id="isolated-verification"></a>
+## Isolated Verification
+
+The [two-replica test](../apps/cli/tests/profiles/docker/replicas.e2e.ts) requires Docker Compose, installed workspace dependencies, Playwright Chromium, and a locally built application image. Set `DSH_DOCKER_TEST_IMAGE` to that image, then run:
+
+```sh
+pnpm exec vitest run --config vitest.e2e.config.ts apps/cli/tests/profiles/docker/replicas.e2e.ts --retry 0
+```
+
+The test creates a random Compose project with its own OceanBase, Redis, Nacos, model fixture, and two application replicas. It assigns a DML-only database account to the application and checks upload ownership, cross-replica streaming, cache recovery, confirmation after container replacement, and unchanged archived rows and table definitions. Test authentication exists only in its proxy fixture; production identity still comes from the trusted platform. Diagnostics remain under `.artifacts/dsh-v3-*`; teardown removes the project's containers and volumes, including after failure. The test does not address existing application services and skips when no image is selected.
 
 <a id="configuration-updates"></a>
 ## Configuration Updates

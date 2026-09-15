@@ -133,7 +133,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ```ts cordis-catalog
 /**
- * Read question state from the exact agent's session log.
+ * Read the incremental question projection for the exact agent's session.
  * @param agent - agent whose question state is requested.
  * @returns the current pending request and most recent decision.
  */

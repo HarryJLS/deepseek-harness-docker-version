@@ -8,6 +8,9 @@
 **/.venv
 **/__pycache__
 **/.pytest_cache
+dist-exe
+dist-python
+python/sdk-runtime/src/deepseek_harness_runtime/runtime
 deploy/testplugin
 *.log
 .artifacts

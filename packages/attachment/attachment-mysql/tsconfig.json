@@ -24,9 +24,6 @@
       "path": "../attachment-local"
     },
     {
-      "path": "../../runtime-diagnostics/invariants"
-    },
-    {
       "path": "../../util/mysql-schema"
     },
     {

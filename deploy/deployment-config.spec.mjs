@@ -17,11 +17,14 @@ describe('Nacos deployment configuration', () => {
   it('resolves shared execution timings and rejects unsafe or unknown Nacos settings', () => {
     assert.deepEqual(resolve({ database }).execution, {
       leaseMs: 30000, renewIntervalMs: 5000, pollIntervalMs: 500, maxQuestionBytes: 65536,
+      uploadReceiptTtlMs: 172800000, assistantStateChunkBytes: 49152,
     })
     for (const execution of [
       null, [], { routeByIp: true }, { leaseMs: 1000 }, { pollIntervalMs: 0 },
       { leaseMs: 3000, renewIntervalMs: 2000 }, { maxQuestionBytes: 4194305 },
+      { uploadReceiptTtlMs: 0 }, { assistantStateChunkBytes: 1023 }, { assistantStateChunkBytes: 786433 },
     ]) assert.throws(() => resolve({ database, execution }), /deployment.execution/u)
+    assert.equal(resolve({ database, execution: { uploadReceiptTtlMs: 2000, assistantStateChunkBytes: 4096 } }).execution.uploadReceiptTtlMs, 2000)
   })
   it('requires a complete Nacos database declaration', () => {
     for (const document of [undefined, {}, { deployment: {} }, { deployment: { database: {} } }]) {
@@ -47,6 +50,13 @@ describe('Nacos deployment configuration', () => {
     for (const url of ['invalid', 'https://host/db', 'mysql://host/']) {
       assert.throws(() => resolve({ database: { ...uri, url } }))
     }
+  })
+
+  it('selects a fresh application namespace without changing backing services', () => {
+    const previous = deploymentEnvironment(resolve({ appName: 'order-svc', database }))
+    const current = deploymentEnvironment(resolve({ appName: 'order-svc-v015', database }))
+    assert.equal(current.DSH_APP_NAME, 'order-svc-v015')
+    assert.deepEqual({ ...current, DSH_APP_NAME: previous.DSH_APP_NAME }, previous)
   })
 
   it('preserves password bytes without evaluating shell substitutions', () => {

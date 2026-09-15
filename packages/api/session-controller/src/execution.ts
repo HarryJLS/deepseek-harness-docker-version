@@ -2,7 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { TypertRemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import type { ApiSessionAgentController } from './agent.ts'
 
 /** Keeps a reservation through one agent activity and releases the local lifecycle afterward. */
@@ -44,15 +44,19 @@ export class SessionExecutionController {
     const persistence = this.ctx.get('sessionPersistence')
     const shared = persistence?.sharedExecution
     if (persistence === undefined || shared === undefined) return operation()
+    const { SessionPersistenceNotFoundError } = await import('@deepseek-ai/dsh-session-persistence')
     let lease
     try {
       lease = await shared.acquire(id)
     } catch (error) {
-      throw new TypertRemoteFailure({
-        code: 'agent-busy',
-        message: error instanceof Error ? error.message : String(error),
-        details: {},
-      })
+      if (error instanceof SessionPersistenceNotFoundError) {
+        throw new RemoteError('session/not-found', error.message, { sessionId: id })
+      }
+      throw new RemoteError(
+        'session/agent-busy',
+        error instanceof Error ? error.message : String(error),
+        { reason: 'shared execution reservation unavailable' },
+      )
     }
     const cancel = (): void => {
       this.ctx.agents.get(id)?.cancel({ kind: 'user' }, { keepInbox: true })
@@ -79,7 +83,6 @@ export class SessionExecutionController {
       lease.signal.throwIfAborted()
       const session = this.ctx.sessions.get(id)
       if (session !== undefined) {
-        await persistence.ensureMaterialized(session)
         await this.ctx.parallel('session/flush', session)
       }
       const agent = this.ctx.agents.get(id)

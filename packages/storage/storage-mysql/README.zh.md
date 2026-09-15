@@ -40,6 +40,8 @@ KV 单元支持短事务：锁定既有应用与单元记录，读取最新数�
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
+本包不发布运行时不变式伴生入口。事务持久性与重新打开后的行为需要数据库集成检查，存储枢纽负责后端注册。
+
 <details>
 <summary>实现细节</summary>
 

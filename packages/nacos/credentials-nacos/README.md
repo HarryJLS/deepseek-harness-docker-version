@@ -68,6 +68,8 @@ Reference writes reject when a nonempty process environment value would shadow t
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+No runtime invariant companion is published. The credentials service owns in-process updates; remote document propagation and environment precedence require integration observations.
+
 <details>
 <summary>Implementation internals</summary>
 

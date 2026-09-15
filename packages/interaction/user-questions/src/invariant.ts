@@ -52,7 +52,7 @@ const install: InvariantInstaller = Object.assign((ctx: Context, fail: Invariant
     states.set(session, state)
   }
   const seed = (session: Session): void => {
-    for (const event of session.events) observe(session, event)
+    for (const event of session.snapshotEvents()) observe(session, event)
   }
   for (const session of ctx.sessions.list()) seed(session)
   ctx.on('session/created', seed, { global: true })

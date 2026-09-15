@@ -5,9 +5,36 @@ import { relative, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { assertNever, type ContentBlock, type Message } from '@deepseek-ai/dsh-llm'
-import type { SurfaceEvent } from '@deepseek-ai/dsh-session'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, Message } from '@deepseek-ai/dsh-llm'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
+import type { Session, SurfaceEvent } from '@deepseek-ai/dsh-session'
 import { DEFAULT_USER_ID, withUser } from '@deepseek-ai/dsh-user-context'
+
+/** Keep available media usable beside the exact quoted history, without duplicating ordinary text. */
+function retainedMedia(blocks: readonly ContentBlock[]): ContentBlock[] {
+  return blocks.flatMap((block): ContentBlock[] => {
+    if (block.type === 'image' || block.type === 'file') return [block]
+    return block.type === 'tool-result' ? retainedMedia(block.content) : []
+  })
+}
+
+/** A quoted tool exchange must include every result of its assistant's calls. */
+function assistantGroupEnd(session: Session, nodes: readonly SurfaceEvent[], start: number): number {
+  const event = nodes[start]
+  if (event?.type !== 'assistant/message') throw new Error('temporary attachment: expected an assistant history node')
+  const pending = new Set(event.data.message.content.flatMap(block => block.type === 'tool-call' ? [block.id] : []))
+  let end = start
+  while (pending.size > 0 && end + 1 < nodes.length) {
+    const next = nodes[++end] as SurfaceEvent
+    const message = session.deriveEventMessage(next)
+    for (const block of message?.content ?? []) {
+      if (block.type === 'tool-result') pending.delete(block.toolCallId)
+    }
+  }
+  if (pending.size > 0) throw new Error('temporary attachment: cannot replace an unfinished assistant tool exchange')
+  return end
+}
 
 /**
  * Keep temporary-file disappearance reconstructable from the session log.
@@ -67,11 +94,12 @@ export function installTemporaryImageContext(
           return rewritten === value.message ? value : { ...value, message: rewritten }
         }
         const { session } = agent
-        const history = session.events
-        for (const seq of [...session.surface.nodes]) {
-          const event = history[seq] as SurfaceEvent
+        const nodes = session.surface.nodes.map(seq => session.eventAt(seq) as SurfaceEvent)
+        for (let index = 0; index < nodes.length; index++) {
+          const event = nodes[index] as SurfaceEvent
+          const seq = event.seq
           const intent = {
-            surfaceOp: { op: 'replace' as const, start: seq, end: seq },
+            surfaceOp: { op: 'replace' as const, startSeq: seq, endSeq: seq },
             sourceEventSeqs: [seq],
           }
           switch (event.type) {
@@ -81,13 +109,43 @@ export function installTemporaryImageContext(
               if (rewritten !== event.data) session.append(event.type, rewritten, intent)
               break
             }
-            case 'assistant/message':
+            case 'assistant/message': {
+              const rewritten = await embeddedMessage(event.data)
+              signal.throwIfAborted()
+              if (rewritten === event.data) break
+              // V3 assistant records are immutable model settlements. Quote the
+              // complete tool exchange as plugin context, preserving the source
+              // records and keeping orphaned tool results out of model history.
+              const end = assistantGroupEnd(session, nodes, index)
+              const group = nodes.slice(index, end + 1)
+              const messages: Message[] = []
+              for (const item of group) {
+                const original = session.deriveEventMessage(item)
+                if (original !== null) messages.push(await message(original))
+              }
+              signal.throwIfAborted()
+              const summary = 'Temporary images in prior assistant output are unavailable.'
+              session.append('user/message', createUserMessage({
+                content: [
+                  { type: 'text', text: `${summary}\n\nRecorded history with missing images replaced by their paths:\n${JSON.stringify(messages)}` },
+                  ...messages.flatMap(value => retainedMedia(value.content)),
+                ],
+                source: { kind: 'plugin', plugin: 'attachment-local', form: 'notice', summary },
+              }), {
+                surfaceOp: { op: 'replace', startSeq: seq, endSeq: (nodes[end] as SurfaceEvent).seq },
+                sourceEventSeqs: group.map(item => item.seq),
+              })
+              index = end
+              break
+            }
             case 'tool/result': {
               const rewritten = await embeddedMessage(event.data)
               signal.throwIfAborted()
               if (rewritten !== event.data) session.append(event.type, rewritten, intent)
               break
             }
+            case 'system/message':
+              break
             /* v8 ignore next 2 -- SessionSurface contains only the closed set of message-producing events. */
             default:
               assertNever(event, 'temporary attachment surface')

@@ -38,6 +38,8 @@ kind: "package-bundle"
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
+本包不发布运行时不变式伴生入口。本部署包提供配置，Loader 在配置档启动时验证插件解析。
+
 <details>
 <summary>实现细节</summary>
 

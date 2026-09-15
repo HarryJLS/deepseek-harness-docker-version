@@ -1,0 +1,6 @@
+- id: session-title-llm
+  disabled: true
+- id: session-log-deepseek
+  disabled: true
+- id: plugin-package-inventory-deepseek
+  disabled: true

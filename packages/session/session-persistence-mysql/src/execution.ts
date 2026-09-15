@@ -5,6 +5,7 @@ import type mysql from 'mysql2/promise'
 import z from '@deepseek-ai/schemastery'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionExecutionLease, SharedSessionExecution } from '@deepseek-ai/dsh-session-persistence'
+import { SessionAlreadyOwnedError, SessionOwnershipLostError, SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import {
   assertMysqlTable, mysqlAuditValues, mysqlTable, MYSQL_AUDIT_COLUMNS, MYSQL_AUDIT_VALUES,
 } from '@deepseek-ai/dsh-mysql-schema'
@@ -76,7 +77,7 @@ export class MysqlSessionExecution implements SharedSessionExecution {
 
   async acquire(id: SessionId): Promise<SessionExecutionLease> {
     await this.authorize(id, true)
-    if (this.owned.has(id)) throw new Error('This conversation is busy. Please retry after the current operation finishes.')
+    if (this.owned.has(id)) throw new SessionAlreadyOwnedError(id)
     const owner = { token: randomUUID(), abort: new AbortController() }
     this.owned.set(id, owner)
     const started = performance.now()
@@ -90,7 +91,7 @@ export class MysqlSessionExecution implements SharedSessionExecution {
             JSON.stringify({ token: '', expiresAt: 0, cancelled: false })],
         )
         const row = await this.read(conn, id, true)
-        if (row.value.expiresAt > row.now) throw new Error('This conversation is busy. Please retry after the current operation finishes.')
+        if (row.value.expiresAt > row.now) throw new SessionAlreadyOwnedError(id)
         await this.write(conn, id, { token: owner.token, expiresAt: row.now + this.config.leaseMs, cancelled: false })
       })
     } catch (error) {
@@ -166,6 +167,32 @@ export class MysqlSessionExecution implements SharedSessionExecution {
   }
 
   /**
+   * Capture a write fence for one asynchronous publisher.
+   * @param id - Session reserved on this replica.
+   * @returns validator that returns the captured token only while that exact reservation owns the row.
+   */
+  captureFence(id: SessionId): (connection: mysql.PoolConnection) => Promise<string> {
+    const captured = this.owned.get(id)
+    if (captured === undefined) throw new SessionOwnershipLostError(id)
+    return async (connection) => {
+      const row = await this.assertTransaction(connection, id)
+      if (row.value.token !== captured.token) throw new SessionOwnershipLostError(id)
+      return captured.token
+    }
+  }
+
+  /**
+   * Read the live publication epoch without disclosing another user's reservation.
+   * @param id - authorized Session identity.
+   * @returns its active reservation token, or undefined after release or expiry.
+   */
+  async publicationEpoch(id: SessionId): Promise<string | undefined> {
+    await this.authorize(id)
+    const row = await this.read(this.pool, id)
+    return row.value.expiresAt > row.now ? row.value.token : undefined
+  }
+
+  /**
    * Fence a session write in the same transaction as its event INSERTs.
    * @param conn - active writer transaction.
    * @param id - session being written.
@@ -178,7 +205,7 @@ export class MysqlSessionExecution implements SharedSessionExecution {
     const owner = this.owned.get(id)
     const row = await this.read(conn, id, true)
     if (owner === undefined || row.value.token !== owner.token || row.value.expiresAt <= row.now) {
-      throw new Error('Session execution ownership was lost; this writer cannot commit.')
+      throw new SessionOwnershipLostError(id)
     }
     return row
   }
@@ -199,7 +226,9 @@ export class MysqlSessionExecution implements SharedSessionExecution {
 
   /** Release all admitted reservations before the owning database pool closes. */
   async close(): Promise<void> {
-    await Promise.all([...this.releases].map(release => release()))
+    const results = await Promise.allSettled([...this.releases].map(release => release()))
+    const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason as unknown] : [])
+    if (failures.length > 0) throw new AggregateError(failures, 'session execution reservation release failed')
   }
 
   private async authorize(id: SessionId, allowMissing = false): Promise<void> {
@@ -208,7 +237,7 @@ export class MysqlSessionExecution implements SharedSessionExecution {
       [this.app, id],
     )
     if (rows.length === 0 ? !allowMissing : !canAccessUser(parseUserId(rows[0]?.user_id))) {
-      throw new Error('Session not found.')
+      throw new SessionPersistenceNotFoundError(id)
     }
   }
 

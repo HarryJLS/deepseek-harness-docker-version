@@ -8,9 +8,10 @@ import { DomainError } from './error.ts'
  * Read and validate one complete domain without publishing partial state.
  * @param spec - declared table and global schemas.
  * @param unit - ordinary or transaction-scoped backend reader.
+ * @param reportInvalidRecord - reports an invalid record after its backup succeeds.
  * @returns detached validated tables and global value.
  */
-export async function loadDomainSnapshot(spec: DomainSpec, unit: KvUnit): Promise<{
+export async function loadDomainSnapshot(spec: DomainSpec, unit: KvUnit, reportInvalidRecord: (message: string) => void): Promise<{
   tables: Map<string, Map<string, unknown>>
   globalValue: unknown
 }> {
@@ -19,7 +20,19 @@ export async function loadDomainSnapshot(spec: DomainSpec, unit: KvUnit): Promis
   for (const [table, definition] of Object.entries(spec.tables)) {
     const records = new Map<string, unknown>()
     for (const [key, raw] of Object.entries(snapshot.tables[table] ?? {})) {
-      records.set(key, parseRecord(spec.name, table, key, () => definition.valueSchema.parse(raw)))
+      let parsed: unknown
+      try {
+        parsed = parseRecord(spec.name, table, key, () => definition.valueSchema.parse(raw))
+      } catch (error) {
+        if (spec.invalidRecords !== 'backup-and-skip' || unit.backupRecord === undefined) throw error
+        const moved = await unit.backupRecord(table, key)
+        reportInvalidRecord(
+          `domain '${spec.name}': stored record '${key}' in table '${table}' failed schema validation; `
+          + `moved to '${moved}' and treated as absent. Cause: ${String((error as DomainError).cause)}`,
+        )
+        continue
+      }
+      records.set(key, parsed)
     }
     tables.set(table, records)
   }

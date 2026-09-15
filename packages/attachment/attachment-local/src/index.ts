@@ -5,18 +5,24 @@ import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { AttachmentError, AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type {
+  FileAttachmentRef,
   ImageAttachmentLimits,
   ImageAttachmentRef,
   ImageRequestPolicy,
   RequestImageAttachment,
+  SaveFileAttachment,
+  SaveFileStreamAttachment,
   SaveImageAttachment,
   StoredImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { currentUserId } from '@deepseek-ai/dsh-user-context'
 import type { NormalizationPolicy } from './normalization.ts'
-import { CompressionLimiter } from './compression-limiter.ts'
+import { CompressionLimiter, compressionFailure } from './compression-limiter.ts'
 import { commitPreparedImageFile, normalizedImagePath, prepareImageFile, readImageFile, validateImageFile } from './store.ts'
+import {
+  readFileStreamVerbatim, saveFileStreamVerbatim, saveFileVerbatim, storedFilePath,
+} from './file-store.ts'
 import { readRequestImageFile, requestImageVariantId } from './request-image.ts'
 import { installTemporaryImageContext } from './temporary-context.ts'
 import type { PreparedImageFile } from './store.ts'
@@ -129,9 +135,7 @@ class SharedRequest<T> {
       }, (error: unknown) => {
         signal.removeEventListener('abort', abort)
         release(false)
-        // CompressionLimiter normalizes task rejections before this handler.
-        // oxlint-disable-next-line typescript/prefer-promise-reject-errors
-        reject(error)
+        reject(compressionFailure(error))
       })
     })
   }
@@ -263,6 +267,38 @@ export class LocalAttachmentStore extends AttachmentStore {
       name: ref.name ?? String(ref.attachmentId).slice('sha256:'.length),
       temporaryPath: relative(process.cwd(), normalizedImagePath(root, ref)).split(sep).join('/'),
     }
+  }
+
+  override async saveFile(input: SaveFileAttachment): Promise<FileAttachmentRef> {
+    const root = this.storageRoot()
+    return this.fileReference(await saveFileVerbatim(root, input), root)
+  }
+
+  override async saveFileStream(input: SaveFileStreamAttachment): Promise<FileAttachmentRef> {
+    const root = this.storageRoot()
+    return this.fileReference(await saveFileStreamVerbatim(root, input), root)
+  }
+
+  override readFileStream(ref: FileAttachmentRef, signal?: AbortSignal): AsyncIterable<Uint8Array> {
+    this.fileHostPath(ref)
+    return readFileStreamVerbatim(this.storageRoot(), ref, signal)
+  }
+
+  override fileHostPath(ref: FileAttachmentRef): string {
+    const path = storedFilePath(this.storageRoot(), ref)
+    if (ref.temporaryPath !== undefined && (
+      !this.temporary || ref.temporaryPath !== relative(process.cwd(), path).split(sep).join('/')
+    )) {
+      throw new AttachmentError('Temporary file reference does not belong to this user and storage root.', 'INVALID_ATTACHMENT_REF')
+    }
+    return path
+  }
+
+  private fileReference(ref: FileAttachmentRef, root: string): FileAttachmentRef {
+    return this.temporary ? {
+      ...ref,
+      temporaryPath: relative(process.cwd(), storedFilePath(root, ref)).split(sep).join('/'),
+    } : ref
   }
 
   override async readImageRequest(
