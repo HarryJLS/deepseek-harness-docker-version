@@ -51,7 +51,12 @@ describe.skipIf(url === undefined)('retained MySQL application data', () => {
     const writer = await previous.sessionPersistence.create(header)
     await writer.append(oneTurnLog())
     await writer.close()
-    await pool.query("UPDATE dsh_session SET meta = JSON_SET(meta, '$.version', 0) WHERE app = ?", [oldApp])
+    await pool.query(
+      `UPDATE dsh_session SET meta = JSON_OBJECT(
+         'type', 'session', 'version', 0, 'id', session_id, 'createdAt', 1000, 'delegationDepth', 0
+       ) WHERE app = ?`,
+      [oldApp],
+    )
     const descriptor = { name: 'archive_check', version: 0, tables: ['workspaces'], hasGlobal: true }
     const oldUnit = await previous.storage.backend.get('mysql').kv!.open(descriptor)
     cleanup.push(() => oldUnit.close())
@@ -76,7 +81,7 @@ describe.skipIf(url === undefined)('retained MySQL application data', () => {
     }
     const retained = await rows()
     const definitions = await schemas()
-    await expect(previous.sessionPersistence.list()).rejects.toThrow('log format v0')
+    expect(await previous.sessionPersistence.list()).toMatchObject([{ id: header.id, version: 3, isSeeded: false }])
 
     const current = await mount(newApp, 932)
     expect(await current.sessionPersistence.list()).toEqual([])

@@ -80,19 +80,33 @@ describe.skipIf(url === undefined)('MySQL Session handles', () => {
     })
   })
 
-  it('refuses V0 headers without altering their database rows', async () => {
+  it('reads V0 headers and rewrites the session on its next write', async () => {
     const backend = await fixture()
     const app = [...apps][0]!
     if (url === undefined) throw new Error('DSH_TEST_MYSQL_URL is required')
     const pool = mysql.createPool(resolveMysqlPool({ url }))
     const header = meta('old-format')
     try {
-      await using writer = await backend.persistence.create(header)
-      await writer.flush()
-      await pool.query('UPDATE dsh_session SET meta = JSON_SET(meta, \'$.version\', 0) WHERE app = ? AND session_id = ?', [app, header.id])
-      await expect(backend.persistence.open(header.id, 'read')).rejects.toThrow('log format v0')
+      const initial = await backend.persistence.create(header)
+      await initial.flush()
+      await initial.close()
+      await pool.query(
+        `UPDATE dsh_session SET meta = JSON_OBJECT(
+           'type', 'session', 'version', 0, 'id', ?, 'createdAt', ?, 'delegationDepth', 0
+         ) WHERE app = ? AND session_id = ?`,
+        [header.id, header.createdAt, app, header.id],
+      )
+      await using reader = await backend.persistence.open(header.id, 'read')
+      expect(reader.header).toMatchObject({ id: header.id, version: 3, isSeeded: false })
+      expect((await reader.read()).events).toEqual([])
       const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT meta FROM dsh_session WHERE app = ? AND session_id = ?', [app, header.id])
       expect(rows[0]!.meta).toMatchObject({ version: 0 })
+
+      const rewritten = await backend.persistence.open(header.id, 'write')
+      await rewritten.append(oneTurnLog())
+      await rewritten.close()
+      const [current] = await pool.query<mysql.RowDataPacket[]>('SELECT meta FROM dsh_session WHERE app = ? AND session_id = ?', [app, header.id])
+      expect(current[0]!.meta).toMatchObject({ version: 3, inheritedEventCount: 0 })
     } finally {
       await pool.end()
     }

@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Recover session history from the same application database after replacing a container. Per-session handles create, read, append, flush, and close V3 logs stored in two database tables.
+Recover session history from the same application database after replacing a container. Per-session handles create, read, append, flush, and close logs stored in two database tables; the provider writes the installed current format and exposes the same logical format after reading supported historical generations.
 
 The optional `redis` configuration enables shared, expiring context reads. Container deployments require this configuration from Nacos; [Redis configuration and key layout](../../../deploy/README.md#redis-cache) have one operational reference.
 
@@ -35,7 +35,7 @@ The [shared schema helpers](../../util/mysql-schema/README.md) define audit fiel
 
 `create` returns an exclusive write handle whose empty session is initially visible only to this provider. The first append or explicit flush materializes it. Closing a creation that never appended or flushed erases that pending identity. `open(id, 'read')` does not activate an Agent or repair history; `open(id, 'write')` validates the stored log and reserves its writer. Reads return detached events and honor offset and length. The logical header and exact inherited prefix survive reopen.
 
-`writeBatchMaxDelayMs` controls the fixed live-event coalescing window, default 200 ms and range 1 through 60000. `session/flush`, a write handle's `flush`, and service-wide `flush` drain pending batches immediately. Failed automatic writes retain their events and pause the timer until an explicit retry. Handle close and provider teardown drain accepted work before releasing ownership or database connections; failures remain visible. Historical V0 rows are refused without modification; [retained data](../../../deploy/README.md#retained-data) stays under a separate application name.
+`writeBatchMaxDelayMs` controls the fixed live-event coalescing window, default 200 ms and range 1 through 60000. `session/flush`, a write handle's `flush`, and service-wide `flush` drain pending batches immediately. Failed automatic writes retain their events and pause the timer until an explicit retry. Handle close and provider teardown drain accepted work before releasing ownership or database connections; failures remain visible. The provider reads supported historical rows through the shared adjacent format catalog and returns only the current logical format. A later write rewrites that session atomically in the current format; unsupported future generations are refused without interpretation. [Retained data](../../../deploy/README.md#retained-data) stays under a separate application name.
 
 MySQL commits each batch before Redis receives it. Cache misses, incomplete chunks, checksum failures, and runtime Redis failures read the affected page from MySQL without truncating history. Startup fails when a configured Redis server cannot connect. Every read still validates the database header and log extent; Redis does not grant access or make a database outage transparent.
 
@@ -53,7 +53,7 @@ When file uploads are mounted, completed receipts use existing KV rows without b
 
 The provider owns handle tracking and live-event routing; each handle serializes its mutations and retains its failed batches. Header materialization and the first event batch commit together. Row-per-event transactions cannot produce a torn JSONL tail. Resume owns semantic interruption repair through ordinary handle appends. Revision tokens include database, application, and physical-row identity. Recovery reads at most 1,000 events per keyset page; a read open inspects metadata without loading the body.
 
-Redis stores separate immutable event values, splitting oversized values into checksummed byte chunks. Every key has a sliding TTL, and physical database row identity separates recreated sessions from old cache entries. A SQL row lock and contiguous sequence check reject competing write batches. With `execution` configured, an expired or superseded reservation also rejects the transaction.
+Redis stores separate immutable current-format event values, splitting oversized values into checksummed byte chunks. Every key has a sliding TTL, and the hashed key identity plus the current Session format version separates recreated sessions and old cache generations without changing the existing key prefix. A SQL row lock and contiguous sequence check reject competing write batches. With `execution` configured, an expired or superseded reservation also rejects the transaction.
 
 No runtime invariant companion is published: SQL transaction outcomes, cross-connection visibility, and lease fencing require database integration tests rather than a second in-process copy of the writer's state.
 

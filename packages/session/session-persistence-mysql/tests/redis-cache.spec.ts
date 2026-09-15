@@ -195,6 +195,16 @@ describe('Redis session event cache', () => {
     expect(await value.read(header(), 'row', 0, 1)).toBeUndefined()
   })
 
+  it('treats cache entries from another Session format generation as misses', async () => {
+    const value = await cache()
+    await value.write(header(), 'row', [event(0)])
+    const key = [...server.entries.keys()][0]!
+    const record = JSON.parse(server.entries.get(key)!.value.toString('utf8')) as Record<string, unknown>
+    record['sessionVersion'] = 2
+    server.entries.get(key)!.value = Buffer.from(JSON.stringify(record))
+    expect(await value.read(header(), 'row', 0, 1)).toBeUndefined()
+  })
+
   it('keeps oversized events database-only without caching a truncated value', async () => {
     const value = await cache({ maxChunkBytes: 1024, maxEventBytes: 2048 })
     await value.write(header(), 'row', [event(0, 'x'.repeat(3000))])

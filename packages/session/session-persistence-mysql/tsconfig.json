@@ -28,6 +28,9 @@
       "path": "../session-persistence"
     },
     {
+      "path": "../session-format-catalog"
+    },
+    {
       "path": "../../util/mysql-schema"
     },
     {
